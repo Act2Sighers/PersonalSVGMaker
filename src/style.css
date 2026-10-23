@@ -388,3 +388,54 @@ button:disabled {
 .proj-info small {
   color: var(--muted);
 }
+
+.modal-bg.top {
+  z-index: 20;
+}
+.modal.small {
+  width: min(420px, 92vw);
+  gap: 12px;
+}
+.modal.small h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.modal.small p {
+  margin: 0;
+  line-height: 1.6;
+}
+.modal-actions.end {
+  justify-content: flex-end;
+  margin: 0;
+}
+.text-input {
+  height: 42px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid #4a4e56;
+  background: #1d1f22;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  -webkit-user-select: auto;
+  user-select: auto;
+}
+.opt-btn.danger-fill {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+/* 狭い画面では上部バーを横スクロールにする */
+@media (max-width: 760px) {
+  .topbar {
+    overflow-x: auto;
+  }
+  .doc-title,
+  .zoom-label {
+    display: none;
+  }
+  .panel {
+    width: min(300px, 100%);
+  }
+}

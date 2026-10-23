@@ -181,6 +181,49 @@ function download(name: string, text: string, type: string) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+/** 画面内の入力ダイアログ（prompt の代わり） */
+function askText(title: string, initial: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const bg = el('div', 'modal-bg top');
+    const box = el('form', 'modal small');
+    const input = el('input', 'text-input');
+    input.value = initial;
+    input.id = 'ask-text';
+    const btns = el('div', 'modal-actions end');
+    const cancel = el('button', 'opt-btn', 'キャンセル');
+    cancel.type = 'button';
+    const ok = el('button', 'opt-btn active', 'OK');
+    ok.type = 'submit';
+    btns.append(cancel, ok);
+    box.append(el('h2', '', escapeHtml(title)), input, btns);
+    bg.append(box);
+    document.body.append(bg);
+    input.focus();
+    input.select();
+    const done = (v: string | null) => { bg.remove(); resolve(v); };
+    cancel.addEventListener('click', () => done(null));
+    box.addEventListener('submit', (e) => { e.preventDefault(); done(input.value.trim()); });
+  });
+}
+
+/** 画面内の確認ダイアログ（confirm の代わり） */
+function askConfirm(message: string, okLabel: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const bg = el('div', 'modal-bg top');
+    const box = el('div', 'modal small');
+    const btns = el('div', 'modal-actions end');
+    const cancel = el('button', 'opt-btn', 'キャンセル');
+    const ok = el('button', 'opt-btn danger-fill', escapeHtml(okLabel));
+    btns.append(cancel, ok);
+    box.append(el('p', '', escapeHtml(message)), btns);
+    bg.append(box);
+    document.body.append(bg);
+    const done = (v: boolean) => { bg.remove(); resolve(v); };
+    cancel.addEventListener('click', () => done(false));
+    ok.addEventListener('click', () => done(true));
+  });
+}
+
 const safeName = (s: string) => s.replace(/[\\/:*?"<>|]/g, '_') || 'untitled';
 
 function isDoc(x: unknown): x is Doc {
@@ -208,8 +251,8 @@ export async function openProjects(app: App) {
     b.addEventListener('click', fn);
     actions.append(b);
   };
-  act('新規作成', () => {
-    const name = prompt('作品名', '無題');
+  act('新規作成', async () => {
+    const name = await askText('新しい作品の名前', '無題');
     if (name === null) return;
     const d = newDoc(name || '無題');
     app.loadDoc(d);
@@ -217,8 +260,8 @@ export async function openProjects(app: App) {
     app.fitView();
     close();
   });
-  act('名前を変更', () => {
-    const name = prompt('作品名', app.doc.name);
+  act('名前を変更', async () => {
+    const name = await askText('作品の名前', app.doc.name);
     if (!name) return;
     app.mutate((d) => (d.name = name));
     app.saveNow().then(render);
@@ -240,7 +283,7 @@ export async function openProjects(app: App) {
         app.fitView();
         close();
       } catch {
-        alert('このファイルは読み込めませんでした');
+        await askConfirm('このファイルは読み込めませんでした。このツールで保存した .svgmaker.json を選んでください。', 'OK');
       }
     });
     input.click();
@@ -270,7 +313,7 @@ export async function openProjects(app: App) {
         });
         const del = el('button', 'opt-btn danger', '削除');
         del.addEventListener('click', async () => {
-          if (!confirm(`「${d.name}」を削除しますか？元に戻せません。`)) return;
+          if (!(await askConfirm(`「${d.name}」を削除しますか？元に戻せません。`, '削除'))) return;
           await deleteProject(d.id);
           if (d.id === app.doc.id) {
             app.loadDoc(newDoc());
