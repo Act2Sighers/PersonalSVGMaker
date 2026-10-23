@@ -1,0 +1,9 @@
+{
+  "name": "Personal SVG Maker",
+  "short_name": "SVG Maker",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#2b2d31",
+  "theme_color": "#2b2d31",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

@@ -1,0 +1,200 @@
+import type { Vec } from './types';
+
+export const v = (x: number, y: number): Vec => ({ x, y });
+export const add = (a: Vec, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y });
+export const sub = (a: Vec, b: Vec): Vec => ({ x: a.x - b.x, y: a.y - b.y });
+export const mul = (a: Vec, s: number): Vec => ({ x: a.x * s, y: a.y * s });
+export const dot = (a: Vec, b: Vec) => a.x * b.x + a.y * b.y;
+export const cross = (a: Vec, b: Vec) => a.x * b.y - a.y * b.x;
+export const len = (a: Vec) => Math.hypot(a.x, a.y);
+export const dist = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y);
+export const lerp = (a: Vec, b: Vec, t: number): Vec => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+
+/** 図形を構成する基本要素。keys はこの要素に影響する点の参照（スナップ除外判定用）。 */
+export type Prim =
+  | { kind: 'line'; a: Vec; b: Vec; keys: string[] }
+  | { kind: 'cubic'; p0: Vec; p1: Vec; p2: Vec; p3: Vec; keys: string[] }
+  | { kind: 'circle'; c: Vec; r: number; keys: string[] };
+
+export function cubicAt(p0: Vec, p1: Vec, p2: Vec, p3: Vec, t: number): Vec {
+  const u = 1 - t;
+  const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+  return { x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y };
+}
+
+export function flattenCubic(p0: Vec, p1: Vec, p2: Vec, p3: Vec, n = 48): Vec[] {
+  const out: Vec[] = [];
+  for (let i = 0; i <= n; i++) out.push(cubicAt(p0, p1, p2, p3, i / n));
+  return out;
+}
+
+export function distToSegment(p: Vec, a: Vec, b: Vec): number {
+  const ab = sub(b, a);
+  const l2 = dot(ab, ab);
+  if (l2 === 0) return dist(p, a);
+  const t = Math.max(0, Math.min(1, dot(sub(p, a), ab) / l2));
+  return dist(p, add(a, mul(ab, t)));
+}
+
+export function distToPrim(p: Vec, pr: Prim): number {
+  if (pr.kind === 'line') return distToSegment(p, pr.a, pr.b);
+  if (pr.kind === 'circle') return Math.abs(dist(p, pr.c) - pr.r);
+  const pts = flattenCubic(pr.p0, pr.p1, pr.p2, pr.p3, 48);
+  let best = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) best = Math.min(best, distToSegment(p, pts[i], pts[i + 1]));
+  return best;
+}
+
+/** 無限直線への射影 */
+export function projectToLine(p: Vec, a: Vec, b: Vec): Vec {
+  const ab = sub(b, a);
+  const l2 = dot(ab, ab);
+  if (l2 === 0) return a;
+  return add(a, mul(ab, dot(sub(p, a), ab) / l2));
+}
+
+/** 無限直線どうしの交点 */
+export function lineLineInfinite(a1: Vec, b1: Vec, a2: Vec, b2: Vec): Vec | null {
+  const d1 = sub(b1, a1), d2 = sub(b2, a2);
+  const den = cross(d1, d2);
+  if (Math.abs(den) < 1e-9) return null;
+  const t = cross(sub(a2, a1), d2) / den;
+  return add(a1, mul(d1, t));
+}
+
+const EPS = 1e-9;
+
+function segSeg(a1: Vec, b1: Vec, a2: Vec, b2: Vec): Vec[] {
+  const d1 = sub(b1, a1), d2 = sub(b2, a2);
+  const den = cross(d1, d2);
+  if (Math.abs(den) < EPS) return [];
+  const w = sub(a2, a1);
+  const t = cross(w, d2) / den;
+  const u = cross(w, d1) / den;
+  if (t < -1e-7 || t > 1 + 1e-7 || u < -1e-7 || u > 1 + 1e-7) return [];
+  return [add(a1, mul(d1, t))];
+}
+
+function segCircle(a: Vec, b: Vec, c: Vec, r: number): Vec[] {
+  const d = sub(b, a), f = sub(a, c);
+  const A = dot(d, d), B = 2 * dot(f, d), C = dot(f, f) - r * r;
+  if (A < EPS) return [];
+  const disc = B * B - 4 * A * C;
+  if (disc < 0) return [];
+  const s = Math.sqrt(disc);
+  const out: Vec[] = [];
+  for (const t of disc === 0 ? [-B / (2 * A)] : [(-B - s) / (2 * A), (-B + s) / (2 * A)]) {
+    if (t >= -1e-7 && t <= 1 + 1e-7) out.push(add(a, mul(d, t)));
+  }
+  return out;
+}
+
+function circleCircle(c1: Vec, r1: number, c2: Vec, r2: number): Vec[] {
+  const d = dist(c1, c2);
+  if (d < EPS || d > r1 + r2 || d < Math.abs(r1 - r2)) return [];
+  const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+  const h = Math.sqrt(Math.max(0, r1 * r1 - a * a));
+  const m = add(c1, mul(sub(c2, c1), a / d));
+  const off = { x: (-(c2.y - c1.y) * h) / d, y: ((c2.x - c1.x) * h) / d };
+  return h < 1e-9 ? [m] : [add(m, off), sub(m, off)];
+}
+
+/** 3次ベジェと符号付き関数 f の零点を、サンプリング＋二分法で求める */
+function cubicRoots(p0: Vec, p1: Vec, p2: Vec, p3: Vec, f: (p: Vec) => number): number[] {
+  const N = 96;
+  const ts: number[] = [];
+  let prevT = 0, prevV = f(p0);
+  if (Math.abs(prevV) < 1e-9) ts.push(0);
+  for (let i = 1; i <= N; i++) {
+    const t = i / N;
+    const val = f(cubicAt(p0, p1, p2, p3, t));
+    if (Math.abs(val) < 1e-9) ts.push(t);
+    else if (prevV * val < 0) {
+      let lo = prevT, hi = t, flo = prevV;
+      for (let k = 0; k < 40; k++) {
+        const mid = (lo + hi) / 2;
+        const fm = f(cubicAt(p0, p1, p2, p3, mid));
+        if (flo * fm <= 0) hi = mid;
+        else { lo = mid; flo = fm; }
+      }
+      ts.push((lo + hi) / 2);
+    }
+    prevT = t; prevV = val;
+  }
+  return ts;
+}
+
+function cubicSeg(c: Extract<Prim, { kind: 'cubic' }>, a: Vec, b: Vec): Vec[] {
+  const d = sub(b, a);
+  const l2 = dot(d, d);
+  if (l2 < EPS) return [];
+  const ts = cubicRoots(c.p0, c.p1, c.p2, c.p3, (p) => cross(d, sub(p, a)));
+  const out: Vec[] = [];
+  for (const t of ts) {
+    const p = cubicAt(c.p0, c.p1, c.p2, c.p3, t);
+    const u = dot(sub(p, a), d) / l2;
+    if (u >= -1e-6 && u <= 1 + 1e-6) out.push(p);
+  }
+  return out;
+}
+
+function cubicCircle(c: Extract<Prim, { kind: 'cubic' }>, cc: Vec, r: number): Vec[] {
+  return cubicRoots(c.p0, c.p1, c.p2, c.p3, (p) => dist(p, cc) - r).map((t) => cubicAt(c.p0, c.p1, c.p2, c.p3, t));
+}
+
+type Bez = [Vec, Vec, Vec, Vec];
+function splitBez(b: Bez): [Bez, Bez] {
+  const [p0, p1, p2, p3] = b;
+  const a = lerp(p0, p1, 0.5), m = lerp(p1, p2, 0.5), c = lerp(p2, p3, 0.5);
+  const d = lerp(a, m, 0.5), e = lerp(m, c, 0.5), f = lerp(d, e, 0.5);
+  return [[p0, a, d, f], [f, e, c, p3]];
+}
+function bbox(b: Bez) {
+  const xs = b.map((p) => p.x), ys = b.map((p) => p.y);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+
+function cubicCubic(a: Bez, b: Bez): Vec[] {
+  const out: Vec[] = [];
+  const rec = (p: Bez, q: Bez, depth: number) => {
+    if (out.length > 16) return;
+    const A = bbox(p), B = bbox(q);
+    if (A.x1 < B.x0 || B.x1 < A.x0 || A.y1 < B.y0 || B.y1 < A.y0) return;
+    const sizeA = Math.max(A.x1 - A.x0, A.y1 - A.y0), sizeB = Math.max(B.x1 - B.x0, B.y1 - B.y0);
+    if ((sizeA < 1e-3 && sizeB < 1e-3) || depth > 40) {
+      // 最終段は線分近似で交点を確定
+      const hit = segSeg(p[0], p[3], q[0], q[3]);
+      out.push(hit[0] ?? lerp(p[0], p[3], 0.5));
+      return;
+    }
+    if (sizeA >= sizeB) {
+      const [p1, p2] = splitBez(p);
+      rec(p1, q, depth + 1); rec(p2, q, depth + 1);
+    } else {
+      const [q1, q2] = splitBez(q);
+      rec(p, q1, depth + 1); rec(p, q2, depth + 1);
+    }
+  };
+  rec(a, b, 0);
+  return out;
+}
+
+export function intersect(p: Prim, q: Prim): Vec[] {
+  if (p.kind === 'line' && q.kind === 'line') return segSeg(p.a, p.b, q.a, q.b);
+  if (p.kind === 'line' && q.kind === 'circle') return segCircle(p.a, p.b, q.c, q.r);
+  if (p.kind === 'circle' && q.kind === 'line') return segCircle(q.a, q.b, p.c, p.r);
+  if (p.kind === 'circle' && q.kind === 'circle') return circleCircle(p.c, p.r, q.c, q.r);
+  if (p.kind === 'cubic' && q.kind === 'line') return cubicSeg(p, q.a, q.b);
+  if (p.kind === 'line' && q.kind === 'cubic') return cubicSeg(q, p.a, p.b);
+  if (p.kind === 'cubic' && q.kind === 'circle') return cubicCircle(p, q.c, q.r);
+  if (p.kind === 'circle' && q.kind === 'cubic') return cubicCircle(q, p.c, p.r);
+  if (p.kind === 'cubic' && q.kind === 'cubic') return cubicCubic([p.p0, p.p1, p.p2, p.p3], [q.p0, q.p1, q.p2, q.p3]);
+  return [];
+}
+
+/** 重複を除いた点集合 */
+export function dedupe(pts: Vec[], tol = 1e-4): Vec[] {
+  const out: Vec[] = [];
+  for (const p of pts) if (!out.some((o) => dist(o, p) < tol)) out.push(p);
+  return out;
+}
