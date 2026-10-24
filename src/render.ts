@@ -1,6 +1,8 @@
 import type { App } from './app';
 import type { View } from './view';
-import type { Shape, Vec } from './types';
+import type { Layer, Paint, Shape, Vec } from './types';
+import { layerFaces } from './fills';
+import { faceAt, traceFace, type Face } from './regions';
 import { allShapes, anchorKeys, getPoint, ref, shapePrims } from './doc';
 import type { Prim } from './geom';
 import type { SnapResult } from './snap';
@@ -154,6 +156,56 @@ export function drawSnap(ctx: CanvasRenderingContext2D, view: View, r: SnapResul
   ctx.fill();
 }
 
+export function canvasPaint(ctx: CanvasRenderingContext2D, p: Paint): string | CanvasGradient {
+  if (p.type === 'solid') return p.color;
+  const g = ctx.createLinearGradient(p.x1, p.y1, p.x2, p.y2);
+  g.addColorStop(0, p.color);
+  g.addColorStop(1, p.color2);
+  return g;
+}
+
+/** ワールド座標系で、範囲を指定の塗りで塗る */
+export function paintFace(ctx: CanvasRenderingContext2D, face: Face, paint: Paint) {
+  ctx.beginPath();
+  traceFace(ctx, face);
+  ctx.fillStyle = canvasPaint(ctx, paint);
+  ctx.fill('evenodd');
+}
+
+function drawFills(ctx: CanvasRenderingContext2D, layer: Layer) {
+  if (!layer.fills.length) return;
+  const faces = layerFaces(layer);
+  for (const f of layer.fills) {
+    const face = f.pending ? null : faceAt(faces, f.seed);
+    if (face) paintFace(ctx, face, f.paint);
+  }
+}
+
+/** 範囲が開いて保留中の塗りの目印（画面座標系） */
+function drawPending(ctx: CanvasRenderingContext2D, view: View, layer: Layer) {
+  for (const f of layer.fills) {
+    if (!f.pending) continue;
+    const s = view.toScreen(f.seed);
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 13, 0, Math.PI * 2);
+    ctx.fillStyle = f.paint.color;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = COLORS.draft;
+    ctx.setLineDash([3, 2]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 17px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 3;
+    ctx.strokeText('!', s.x, s.y + 1);
+    ctx.fillText('!', s.x, s.y + 1);
+  }
+}
+
 export interface DrawOpts {
   dpr: number;
   w: number;
@@ -174,13 +226,16 @@ export function drawScene(ctx: CanvasRenderingContext2D, app: App, view: View, o
   ctx.lineWidth = 1 / view.zoom;
   ctx.strokeRect(0, 0, app.doc.width, app.doc.height);
 
+  for (const l of app.doc.layers) if (l.visible) drawFills(ctx, l);
+
   const shapes = allShapes(app.doc);
   const sel = app.sel;
   const fullySelected = (s: Shape) => anchorKeys(s).every((k) => sel.has(ref(s.id, k)));
-  strokeShapes(ctx, view, shapes.filter((s) => !fullySelected(s)), COLORS.line);
+  if (app.settings.showLines) strokeShapes(ctx, view, shapes.filter((s) => !fullySelected(s)), COLORS.line);
   strokeShapes(ctx, view, shapes.filter(fullySelected), COLORS.lineSel, 2);
 
   screenTransform(ctx, dpr);
+  for (const l of app.doc.layers) if (l.visible) drawPending(ctx, view, l);
   drawOrigin(ctx, app, view);
   const showPoints = app.toolId === 'select' || app.toolId === 'move';
   if (showPoints) {

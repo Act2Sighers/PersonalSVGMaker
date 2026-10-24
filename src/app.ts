@@ -1,11 +1,12 @@
 import type { Doc, Layer, PointRef, Settings, Shape, Vec } from './types';
 import { View } from './view';
 import { History } from './history';
-import { newDoc, pruneSelection } from './doc';
+import { cloneDoc, newDoc, normalizeDoc, pruneSelection } from './doc';
+import { reconcileFills } from './fills';
 import { SnapContext, type SnapOptions } from './snap';
 import { saveProject, saveSettings, setLastProjectId } from './storage';
 
-export type ToolId = 'select' | 'move' | 'line' | 'bezier' | 'circle' | 'origin';
+export type ToolId = 'select' | 'move' | 'line' | 'bezier' | 'circle' | 'fill' | 'origin';
 export type InputMode = 'pen' | 'hand';
 
 export interface Tool {
@@ -78,10 +79,12 @@ export class App {
     this.mutate(() => this.activeLayer().shapes.push(s));
   }
 
-  /** 変更を履歴に残してから適用する */
+  /** 変更を履歴に残してから適用する。線が変わった場合は塗りを新しい範囲へ引き継ぐ。 */
   mutate(fn: (doc: Doc) => void) {
-    this.history.record(this.doc);
+    const before = cloneDoc(this.doc);
+    this.history.record(before);
     fn(this.doc);
+    reconcileFills(before, this.doc);
     this.changed();
   }
 
@@ -109,7 +112,7 @@ export class App {
 
   loadDoc(d: Doc) {
     this.tool.reset?.();
-    this.doc = d;
+    this.doc = normalizeDoc(d);
     this.sel.clear();
     this.history.clear();
     setLastProjectId(d.id);

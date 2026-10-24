@@ -2,6 +2,8 @@ import type { App, ToolId } from './app';
 import type { Doc, Settings } from './types';
 import { ICONS } from './icons';
 import { docToLineSvg, newDoc, uid } from './doc';
+import { docToSvg } from './export';
+import { pendingCount } from './fills';
 import { deleteProject, listProjects, loadProject } from './storage';
 
 const TOOLS: { id: ToolId; label: string }[] = [
@@ -10,6 +12,7 @@ const TOOLS: { id: ToolId; label: string }[] = [
   { id: 'line', label: '直線' },
   { id: 'bezier', label: '曲線' },
   { id: 'circle', label: '円' },
+  { id: 'fill', label: '塗り' },
 ];
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = ''): HTMLElementTagNameMap[K] {
@@ -43,11 +46,12 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
   const penBtn = iconButton(ICONS.pen, 'ペン', () => app.setMode('pen'), 'icon-btn mode');
   const handBtn = iconButton(ICONS.hand, 'ハンド', () => app.setMode('hand'), 'icon-btn mode');
   const fitBtn = iconButton(ICONS.fit, '全体表示', () => fitView());
+  const exportBtn = iconButton(ICONS.export, '書き出し', () => openExport(app));
   const zoomLabel = el('span', 'zoom-label');
   const setBtn = iconButton(ICONS.settings, '設定', () => panel.classList.toggle('open'));
   const modeGroup = el('div', 'seg');
   modeGroup.append(penBtn, handBtn);
-  top.append(projBtn, title, el('span', 'spacer'), undoBtn, redoBtn, el('span', 'vsep'), modeGroup, el('span', 'vsep'), fitBtn, zoomLabel, el('span', 'vsep'), setBtn);
+  top.append(projBtn, title, el('span', 'spacer'), undoBtn, redoBtn, el('span', 'vsep'), modeGroup, el('span', 'vsep'), fitBtn, zoomLabel, el('span', 'vsep'), exportBtn, setBtn);
 
   // ── 左ツールバー
   const toolbar = el('nav', 'toolbar');
@@ -92,7 +96,10 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
     zoomLabel.textContent = `${Math.round(app.view.zoom * 100)}%`;
     for (const [id, b] of toolBtns) b.classList.toggle('active', id === app.toolId);
     options.replaceChildren(...app.tool.options());
-    hint.textContent = app.mode === 'hand' ? 'ハンド：1本指でキャンバスを移動、2本指でズーム' : app.status || app.tool.hint();
+    const pend = pendingCount(app.doc);
+    const warn = pend ? `範囲が開いたため保留中の塗りが${pend}件あります（!印）。線を閉じ直すと塗り直されます。\n` : '';
+    hint.textContent = warn + (app.mode === 'hand' ? 'ハンド：1本指でキャンバスを移動、2本指でズーム' : app.status || app.tool.hint());
+    hint.classList.toggle('warn', pend > 0);
     stage.classList.toggle('hand', app.mode === 'hand');
     syncPanel();
   };
@@ -166,6 +173,7 @@ function buildSettingsPanel(panel: HTMLElement, app: App): () => void {
 
   const v = section('表示');
   check(v, 'ルーペ（指の下を拡大）', () => app.settings.loupe, setSetting('loupe'));
+  check(v, '線を表示', () => app.settings.showLines, setSetting('showLines'));
 
   return () => syncs.forEach((f) => f());
 }
@@ -233,6 +241,57 @@ function isDoc(x: unknown): x is Doc {
   return !!d && d.version === 1 && Array.isArray(d.layers) && typeof d.width === 'number';
 }
 
+/** SVG 書き出し画面：プレビュー、コピー、ダウンロード */
+export function openExport(app: App) {
+  const overlay = el('div', 'modal-bg');
+  const box = el('div', 'modal');
+  overlay.append(box);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  const head = el('div', 'modal-head');
+  const closeBtn = el('button', 'opt-btn', '閉じる');
+  closeBtn.addEventListener('click', close);
+  head.append(el('h2', '', 'SVGを書き出す'), el('span', 'spacer'), closeBtn);
+
+  const seam = el('input');
+  seam.type = 'checkbox';
+  seam.id = 'export-seam';
+  seam.checked = true;
+  const seamRow = el('label', 'row');
+  seamRow.append(el('span', '', '隣り合う塗りの境目の隙間を目立たなくする'), seam);
+
+  const preview = el('div', 'export-preview');
+  const status = el('p', 'note');
+  const svgText = () => docToSvg(app.doc, { seamFix: seam.checked });
+  const update = () => {
+    const svg = svgText();
+    preview.innerHTML = `<img alt="書き出しのプレビュー" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}">`;
+    const n = app.doc.layers.reduce((s, l) => s + l.fills.filter((f) => !f.pending).length, 0);
+    status.textContent = `塗り ${n}個・${(new Blob([svg]).size / 1024).toFixed(1)} KB。線は範囲を決めるためのものなので、書き出しには含まれません。`;
+  };
+  seam.addEventListener('change', update);
+
+  const actions = el('div', 'modal-actions');
+  const act = (labelText: string, fn: () => void) => {
+    const b = el('button', 'opt-btn', labelText);
+    b.addEventListener('click', fn);
+    actions.append(b);
+  };
+  act('SVGファイルを保存', () => download(`${safeName(app.doc.name)}.svg`, svgText(), 'image/svg+xml'));
+  act('SVGのコードをコピー', () => {
+    navigator.clipboard.writeText(svgText()).then(
+      () => (status.textContent = 'コピーしました。ゲーム側の Claude Code にそのまま貼り付けて渡せます。'),
+      () => (status.textContent = 'コピーできませんでした。「SVGファイルを保存」を使ってください。'),
+    );
+  });
+  act('線画SVGを保存（確認用）', () => download(`${safeName(app.doc.name)}-lines.svg`, docToLineSvg(app.doc), 'image/svg+xml'));
+
+  box.append(head, seamRow, preview, status, actions);
+  document.body.append(overlay);
+  update();
+}
+
 export async function openProjects(app: App) {
   await app.saveNow();
   const overlay = el('div', 'modal-bg');
@@ -290,7 +349,7 @@ export async function openProjects(app: App) {
     });
     input.click();
   });
-  act('線画SVGを書き出す', () => download(`${safeName(app.doc.name)}.svg`, docToLineSvg(app.doc), 'image/svg+xml'));
+  act('SVGを書き出す', () => { close(); openExport(app); });
 
   const list = el('div', 'proj-list');
   box.append(head, actions, el('p', 'note', '作品はこの端末のブラウザ内に自動保存されます。念のため「ファイルに保存」でも控えを取っておけます。'), list);

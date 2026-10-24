@@ -76,6 +76,7 @@ export const defaultSettings: Settings = {
   snapPerp: true,
   snapExtensions: true,
   loupe: true,
+  showLines: true,
 };
 
 export function loadSettings(): Settings {

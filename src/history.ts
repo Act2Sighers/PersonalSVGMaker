@@ -8,8 +8,9 @@ export class History {
   private undoStack: Doc[] = [];
   private redoStack: Doc[] = [];
 
+  /** before は呼び出し側で複製済みのもの */
   record(before: Doc) {
-    this.undoStack.push(cloneDoc(before));
+    this.undoStack.push(before);
     if (this.undoStack.length > LIMIT) this.undoStack.shift();
     this.redoStack = [];
   }

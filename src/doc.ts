@@ -4,7 +4,7 @@ import { add, sub, type Prim } from './geom';
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
 export function newLayer(name: string): Layer {
-  return { id: uid(), name, visible: true, locked: false, shapes: [] };
+  return { id: uid(), name, visible: true, locked: false, shapes: [], fills: [] };
 }
 
 export function newDoc(name = '無題', width = 512, height = 512): Doc {
@@ -23,6 +23,12 @@ export function newDoc(name = '無題', width = 512, height = 512): Doc {
 }
 
 export const cloneDoc = (d: Doc): Doc => structuredClone(d);
+
+/** 古い形式で保存された作品を今の形式に揃える */
+export function normalizeDoc(d: Doc): Doc {
+  for (const l of d.layers) l.fills ??= [];
+  return d;
+}
 
 export function allShapes(doc: Doc, visibleOnly = true): Shape[] {
   const out: Shape[] = [];
