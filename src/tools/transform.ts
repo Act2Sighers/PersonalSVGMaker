@@ -219,11 +219,11 @@ export class TransformTool implements Tool {
     if (this.pivot) mark(this.pivot, COLORS.origin);
     if (this.refPt) mark(this.refPt, COLORS.draft);
     if (this.axisA) mark(this.axisA, COLORS.draft);
-    if (this.pivot && this.refPt && prev && this.mode !== 'flip') {
+    if (this.pivot && this.refPt && prev && m && this.mode !== 'flip') {
       const pv = this.pivot;
       const val = this.mode === 'scale'
         ? `${fmt((dist(pv, prev.p) / dist(pv, this.refPt)) * 100)}%`
-        : `${fmt((((Math.atan2(prev.p.y - pv.y, prev.p.x - pv.x) - Math.atan2(this.refPt.y - pv.y, this.refPt.x - pv.x)) * 180) / Math.PI + 540) % 360 - 180)}°`;
+        : `${fmt(((((Math.atan2(m!.b, m!.a) * 180) / Math.PI) + 540) % 360) - 180)}°`;
       const s = view.toScreen(prev.p);
       ctx.font = '13px -apple-system, sans-serif';
       ctx.fillStyle = '#fff';
