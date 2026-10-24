@@ -7,7 +7,7 @@ import type { ClipData } from './clipboard';
 import { SnapContext, type SnapOptions } from './snap';
 import { saveProject, saveSettings, setLastProjectId } from './storage';
 
-export type ToolId = 'select' | 'move' | 'transform' | 'line' | 'bezier' | 'circle' | 'fill' | 'pick';
+export type ToolId = 'select' | 'move' | 'transform' | 'line' | 'bezier' | 'circle' | 'freehand' | 'fill' | 'pick';
 export type InputMode = 'pen' | 'hand';
 
 export interface Tool {
@@ -93,16 +93,20 @@ export class App {
 
   /** 図形を描画先のレイヤーに加える。ミラー描画がオンなら、折り返した図形も加える。 */
   addShape(s: Shape) {
+    this.addShapes([s]);
+  }
+  addShapes(list: Shape[]) {
     const layer = this.drawLayer();
     if (!layer) return;
-    const shapes = [s];
+    const shapes = [...list];
     const m = mirrorMatrix(this.doc);
-    if (m) {
-      const [c] = cloneShapes([s]);
-      transformShape(c, m);
-      // 折り返しても同じ形（軸上の円など）なら重ねない
-      if (JSON.stringify({ ...c, id: s.id }) !== JSON.stringify(s)) shapes.push(c);
-    }
+    if (m)
+      for (const s of list) {
+        const [c] = cloneShapes([s]);
+        transformShape(c, m);
+        // 折り返しても同じ形（軸上の円など）なら重ねない
+        if (JSON.stringify({ ...c, id: s.id }) !== JSON.stringify(s)) shapes.push(c);
+      }
     this.mutate(() => layer.shapes.push(...shapes));
   }
 

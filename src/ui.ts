@@ -15,6 +15,7 @@ const TOOLS: { id: ToolId; label: string }[] = [
   { id: 'line', label: '直線' },
   { id: 'bezier', label: '曲線' },
   { id: 'circle', label: '円' },
+  { id: 'freehand', label: '手描き' },
   { id: 'fill', label: '塗り' },
 ];
 

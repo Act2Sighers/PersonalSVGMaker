@@ -13,6 +13,7 @@ import { BezierTool } from './tools/bezier';
 import { CircleTool } from './tools/circle';
 import { PickTool } from './tools/pick';
 import { TransformTool } from './tools/transform';
+import { FreehandTool } from './tools/freehand';
 import { FillTool } from './tools/fill';
 
 const LOUPE_SIZE = 150;
@@ -27,6 +28,7 @@ async function start() {
     line: new LineTool(app),
     bezier: new BezierTool(app),
     circle: new CircleTool(app),
+    freehand: new FreehandTool(app),
     fill: new FillTool(app),
     pick: new PickTool(app),
   };

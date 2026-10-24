@@ -244,7 +244,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, app: App, view: View, o
 
   // ミラー描画：作図中の線を軸の反対側にも薄く表示する
   const mirror = app.doc.mirror;
-  if (mirror.axis !== 'none' && (app.toolId === 'line' || app.toolId === 'bezier' || app.toolId === 'circle')) {
+  if (mirror.axis !== 'none' && (app.toolId === 'line' || app.toolId === 'bezier' || app.toolId === 'circle' || app.toolId === 'freehand')) {
     const o = view.toScreen({ x: mirror.x, y: mirror.y });
     ctx.save();
     ctx.globalAlpha = 0.45;
