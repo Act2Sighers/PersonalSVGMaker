@@ -3,7 +3,7 @@ import type { Vec } from '../types';
 import type { View } from '../view';
 import { dist } from '../geom';
 import { COLORS } from '../render';
-import { fitStroke, resample, smooth, type FreehandMode } from '../fit';
+import { fitStroke, resample, smooth, trimHooks, type FreehandMode } from '../fit';
 import type { SnapResult } from '../snap';
 import { button, label, separator } from './common';
 
@@ -65,13 +65,30 @@ export class FreehandTool implements Tool {
       const r = ctx.snap(p, app.tol);
       return STICKY.has(r.kind) ? r.p : null;
     };
-    const pts = raw.slice();
-    pts[0] = stick(pts[0]) ?? pts[0];
-    const end = pts[pts.length - 1];
-    // 始点の近くで描き終えたら閉じる
-    pts[pts.length - 1] = dist(end, pts[0]) < app.tol && length > app.tol * 4 ? pts[0] : stick(end) ?? end;
+    // 等間隔に並べ直してから、端のはね（指を置いた直後・離す直前のかぎ）を取り除く
+    const pts = trimHooks(resample(raw, 3 * px), px);
+    if (pts.length < 2) return;
+    const start = pts[0], end = pts[pts.length - 1];
+    const closing = dist(end, start) < app.tol && length > app.tol * 4;
+    const startTo = stick(start);
+    const endTo = closing ? startTo ?? start : stick(end);
+    // 端を吸着先へ寄せる。端の1点だけを動かすと折れ目ができるので、端から少し手前までなだらかに寄せる。
+    const reach = Math.max(2, Math.min(Math.floor(pts.length / 3), Math.round((40 * px) / (3 * px))));
+    const pull = (idx: number, to: Vec | null, dir: 1 | -1) => {
+      if (!to) return;
+      const d = { x: to.x - pts[idx].x, y: to.y - pts[idx].y };
+      for (let m = 0; m <= reach; m++) {
+        const q = pts[idx + dir * m];
+        const w = 1 - m / (reach + 1);
+        pts[idx + dir * m] = { x: q.x + d.x * w, y: q.y + d.y * w };
+      }
+    };
+    pull(0, startTo, 1);
+    pull(pts.length - 1, endTo, -1);
+    if (startTo) pts[0] = startTo;
+    if (endTo) pts[pts.length - 1] = endTo;
 
-    const p = smooth(resample(pts, 3 * px));
+    const p = smooth(pts);
     const n = p.length;
     if (n < 2) return;
 
@@ -85,6 +102,8 @@ export class FreehandTool implements Tool {
         if (d < bestD) { bestD = d; best = i; }
       }
       if (best < 0) continue;
+      // 端の近くにある点は、端の吸着で扱うので途中の点にはしない
+      if (dist(c, p[0]) < app.tol || dist(c, p[n - 1]) < app.tol) continue;
       // 近すぎる区切りは作らない
       if (forced.some((f, i) => f && Math.abs(i - best) < margin)) continue;
       forced[best] = c;

@@ -86,6 +86,35 @@ export function findCorners(p: Vec[], k: number): number[] {
   return out.sort((a, b) => a - b);
 }
 
+/**
+ * 線の両端の「はね」を取り除く。指を置いた直後や離す直前は、指先がずれて小さなかぎができやすい。
+ * 端から zone の長さの範囲で、急に（45°以上）向きが変わる所があれば、その先を切り捨てる。
+ * pts は等間隔に並べ直したものを渡す。
+ */
+export function trimHooks(pts: Vec[], px: number): Vec[] {
+  const n = pts.length;
+  if (n < 12) return pts;
+  const step = dist(pts[0], pts[1]) || px;
+  const total = step * (n - 1);
+  const zone = Math.max(2, Math.round(Math.min(22 * px, total * 0.15) / step));
+  const w = Math.max(2, Math.round((6 * px) / step));
+  const limit = (45 * Math.PI) / 180;
+  const sharpest = (from: number, to: number) => {
+    let best = -1, bestT = limit;
+    for (let i = from; i <= to; i++) {
+      const t = turnAngle(pts[Math.max(0, i - w)], pts[i], pts[Math.min(n - 1, i + w)]);
+      if (t > bestT) { bestT = t; best = i; }
+    }
+    return best;
+  };
+  let a = 0, b = n - 1;
+  const head = sharpest(1, Math.min(n - 2, zone));
+  if (head > 0) a = head;
+  const tail = sharpest(Math.max(1, n - 1 - zone), n - 2);
+  if (tail > 0) b = tail;
+  return b - a >= 6 ? pts.slice(a, b + 1) : pts;
+}
+
 function chordParams(pts: Vec[]): number[] {
   const u = [0];
   for (let i = 1; i < pts.length; i++) u.push(u[i - 1] + dist(pts[i - 1], pts[i]));
@@ -213,7 +242,14 @@ function piecesToNodes(pieces: Piece[]): PathNode[] {
   return nodes;
 }
 
-function nodesToShape(nodes: PathNode[], px: number): Shape | null {
+function nodesToShape(raw: PathNode[], px: number): Shape | null {
+  // ほぼ同じ位置に並んだ頂点は1つにまとめる（長さ0の区間を作らない）
+  const nodes: PathNode[] = [];
+  for (const nd of raw) {
+    const prev = nodes[nodes.length - 1];
+    if (prev && dist(prev, nd) < px) prev.hout = nd.hout;
+    else nodes.push({ ...nd });
+  }
   if (nodes.length < 2) return null;
   const first = nodes[0], last = nodes[nodes.length - 1];
   // 始点に戻っていれば閉じた図形にする
@@ -244,7 +280,24 @@ export function fitStroke(pts: Vec[], opt: FitOptions): Shape[] {
 
   if (opt.mode === 'corner') {
     const corners = new Set(findCorners(p, k));
-    const cuts = [...new Set([0, ...corners, ...forcedIdx, n - 1])].sort((a, b) => a - b);
+    let cuts = [...new Set([0, ...corners, ...forcedIdx, n - 1])].sort((a, b) => a - b);
+    // 極端に短い区間は作らない：隣の区間とまとめる（必ず通る点や端は残し、角の方を外す）
+    const minSeg = Math.max(2, Math.round((14 * px) / step));
+    // 外す優先順位：角 → 必ず通る点（端は外さない）
+    const rank = (i: number) => (i === 0 || i === n - 1 ? 2 : forcedIdx.includes(i) ? 1 : 0);
+    for (let changed = true; changed && cuts.length > 2; ) {
+      changed = false;
+      for (let j = 0; j + 1 < cuts.length; j++) {
+        if (cuts[j + 1] - cuts[j] >= minSeg) continue;
+        const ra = rank(cuts[j]), rb = rank(cuts[j + 1]);
+        const drop = Math.min(ra, rb) >= 2 ? -1 : rb <= ra ? j + 1 : j;
+        if (drop < 0) continue;
+        corners.delete(cuts[drop]);
+        cuts = cuts.filter((_, q) => q !== drop);
+        changed = true;
+        break;
+      }
+    }
     const shapes: Shape[] = [];
     let pieces: Piece[] = [];
     const flush = () => {
