@@ -1,8 +1,10 @@
 import type { App, ToolId } from './app';
-import type { Doc, Folder, MirrorAxis, ProjectFolder, Settings } from './types';
+import type { Doc, Folder, MirrorAxis, ProjectFolder, Settings, Underlay } from './types';
 import { ICONS } from './icons';
 import { askConfirm, askText, el, escapeHtml, showInfo } from './dialogs';
 import type { PickTool } from './tools/pick';
+import type { UnderlayTool } from './tools/underlay';
+import { collectImages, fitPlacement, importImageFile, storeImages } from './underlay';
 import { buildLayersPanel } from './layers-panel';
 import { buildTimeline } from './timeline';
 import { allLayers, docToLineSvg, newDoc, newFolder, uid } from './doc';
@@ -218,6 +220,51 @@ function buildSettingsPanel(panel: HTMLElement, app: App): () => void {
   mb.append(pickAxis, centerAxis);
   mi.append(mb, el('p', 'note', 'オンにすると、直線・曲線・円で描いた図形が軸で折り返した位置にも作られます。'));
 
+  // ── 下書き画像
+  const ud = section('下書き画像');
+  const udList = el('div', 'underlay-list');
+  const udAdd = el('button', 'opt-btn', '画像を読み込む');
+  udAdd.addEventListener('click', async () => {
+    const f = await pickFile('image/*');
+    if (!f) return;
+    try {
+      const img = await importImageFile(f);
+      const u: Underlay = { ...fitPlacement(app.doc, img.id, img.width, img.height), name: baseName(f), visible: true };
+      app.mutate((d) => d.underlays.push(u));
+    } catch (e) {
+      await showInfo(`画像を読み込めませんでした（${(e as Error).message}）`);
+    }
+  });
+  ud.append(udAdd, udList, el('p', 'note', '下書きは表示用で、SVGの書き出しには含まれません。'));
+  let udSig = '';
+  syncs.push(() => {
+    const sig = JSON.stringify(app.doc.underlays);
+    if (sig === udSig) return;
+    udSig = sig;
+    udList.replaceChildren(...app.doc.underlays.map((u) => {
+      const row = el('div', 'underlay-row');
+      const vis = el('input');
+      vis.type = 'checkbox';
+      vis.checked = u.visible;
+      vis.title = '表示';
+      vis.addEventListener('change', () => docSet((d) => { const x = d.underlays.find((y) => y.id === u.id); if (x) x.visible = vis.checked; }));
+      const op = el('input', 'alpha-input');
+      op.type = 'number'; op.min = '0'; op.max = '100'; op.step = '10';
+      op.value = String(Math.round(u.opacity * 100));
+      op.title = '不透明度（%）';
+      op.addEventListener('change', () => {
+        const v = Math.max(0, Math.min(100, Number(op.value)));
+        if (Number.isFinite(v)) docSet((d) => { const x = d.underlays.find((y) => y.id === u.id); if (x) x.opacity = v / 100; });
+      });
+      const adjust = el('button', 'opt-btn', '位置');
+      adjust.addEventListener('click', () => { panel.classList.remove('open'); (app.tools.underlay as UnderlayTool).begin({ kind: 'doc', id: u.id }); });
+      const del = el('button', 'opt-btn danger', '削除');
+      del.addEventListener('click', () => docSet((d) => (d.underlays = d.underlays.filter((y) => y.id !== u.id))));
+      row.append(vis, el('span', 'underlay-name', escapeHtml(u.name)), op, el('span', '', '%'), adjust, del);
+      return row;
+    }));
+  });
+
   const s = section('スナップ');
   const scopeSel = el('select', 'select-input');
   scopeSel.id = 'snap-scope';
@@ -428,6 +475,8 @@ export async function openProjects(app: App) {
     try {
       const d = JSON.parse(await f.text());
       if (!isDoc(d)) throw new Error();
+      await storeImages((d as Doc & { images?: Record<string, string> }).images);
+      delete (d as Doc & { images?: unknown }).images;
       d.id = uid(); // 既存の作品を上書きしないよう別の作品として開く
       d.folderId = folderId;
       app.loadDoc(d);
@@ -462,7 +511,8 @@ export async function openProjects(app: App) {
       await showInfo(`このファイルは読み込めませんでした（${(e as Error).message}）`);
     }
   });
-  current.add('作品ファイルに保存', () => download(`${safeName(app.doc.name)}.svgmaker.json`, JSON.stringify(app.doc), 'application/json'));
+  // 作品ファイルには下書き画像も含める
+  current.add('作品ファイルに保存', async () => download(`${safeName(app.doc.name)}.svgmaker.json`, JSON.stringify({ ...app.doc, images: await collectImages(app.doc) }), 'application/json'));
   current.add('SVGを書き出す', () => { close(); openExport(app); });
 
   const crumbs = el('div', 'crumbs');

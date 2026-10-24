@@ -25,6 +25,7 @@ export function newDoc(name = '無題', width = 512, height = 512): Doc {
     layers: [layer],
     activeId: layer.id,
     animations: [],
+    underlays: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -54,6 +55,12 @@ export function normalizeDoc(d: Doc): Doc {
   fix(d.layers);
   d.mirror ??= { axis: 'none', x: d.width / 2, y: d.height / 2 };
   d.animations ??= [];
+  d.underlays ??= [];
+  for (const c of d.animations) {
+    c.underlays ??= [];
+    // 以前の「滑らか」は「加速→減速（弱）」に置き換える
+    for (const t of c.tracks) for (const k of t.keys) if ((k.ease as string) === 'smooth') { k.ease = 'inOut'; k.power = 2; }
+  }
   if (!d.activeId || !findNode(d, d.activeId)) d.activeId = allLayers(d).at(-1)?.id ?? '';
   return d;
 }

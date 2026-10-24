@@ -19,24 +19,45 @@ export const PROPS: { id: AnimProp; label: string; unit: string; def: number }[]
 ];
 export const propDef = (p: AnimProp) => PROPS.find((x) => x.id === p)!.def;
 
-export const EASES: { id: Ease; label: string }[] = [
-  { id: 'smooth', label: '滑らか' },
-  { id: 'linear', label: '等速' },
-  { id: 'step', label: '瞬時' },
+export const EASES: { id: Ease; label: string; powered: boolean }[] = [
+  { id: 'linear', label: '等速', powered: false },
+  { id: 'step', label: '瞬時', powered: false },
+  { id: 'inOut', label: '加速→減速', powered: true },
+  { id: 'in', label: '加速', powered: true },
+  { id: 'out', label: '減速', powered: true },
+  { id: 'circIn', label: '円・加速', powered: false },
+  { id: 'circOut', label: '円・減速', powered: false },
 ];
+
+/** 加速・減速の鋭さ（数値は指数） */
+export const POWERS: { v: number; label: string }[] = [
+  { v: 2, label: '弱' },
+  { v: 3, label: '中' },
+  { v: 4, label: '強' },
+  { v: 5, label: '最強' },
+];
+export const DEFAULT_EASE: Ease = 'inOut';
+export const DEFAULT_POWER = 2;
 
 export type Pose = Record<AnimProp, number>;
 export const restPose = (): Pose => ({ rotate: 0, x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1 });
 
 export function newClip(name: string): Clip {
-  return { id: uid(), name, duration: 2, loop: true, tracks: [] };
+  return { id: uid(), name, duration: 2, loop: true, tracks: [], underlays: [] };
 }
 
-/** つなぎ方に応じた進み具合（0〜1） */
-export function easeValue(e: Ease, u: number): number {
-  if (e === 'step') return 0;
-  if (e === 'linear') return u;
-  return u * u * (3 - 2 * u);
+/** つなぎ方に応じた進み具合（u は区間内の時間の割合 0〜1、返り値は値の進み具合 0〜1） */
+export function easeValue(e: Ease, u: number, power = DEFAULT_POWER): number {
+  const n = Math.max(1, power);
+  switch (e) {
+    case 'linear': return u;
+    case 'step': return u > 0 ? 1 : 0;
+    case 'in': return Math.pow(u, n);
+    case 'out': return 1 - Math.pow(1 - u, n);
+    case 'inOut': return u < 0.5 ? Math.pow(2 * u, n) / 2 : 1 - Math.pow(2 * (1 - u), n) / 2;
+    case 'circIn': return 1 - Math.sqrt(Math.max(0, 1 - u * u));
+    case 'circOut': return Math.sqrt(Math.max(0, 1 - (1 - u) * (1 - u)));
+  }
 }
 
 export function sampleTrack(keys: Keyframe[], t: number, def: number): number {
@@ -46,7 +67,7 @@ export function sampleTrack(keys: Keyframe[], t: number, def: number): number {
     const a = keys[i], b = keys[i + 1];
     if (t < b.t) {
       const u = (t - a.t) / Math.max(1e-9, b.t - a.t);
-      return a.v + (b.v - a.v) * easeValue(a.ease, u);
+      return a.v + (b.v - a.v) * easeValue(a.ease, u, a.power);
     }
   }
   return keys[keys.length - 1].v;
@@ -74,7 +95,7 @@ export function setKey(clip: Clip, node: string, prop: AnimProp, t: number, v: n
   if (!tr) { tr = { node, prop, keys: [] }; clip.tracks.push(tr); }
   const k = tr.keys.find((x) => Math.abs(x.t - t) < 1e-3);
   if (k) k.v = v;
-  else { tr.keys.push({ t, v, ease: 'smooth' }); tr.keys.sort((a, b) => a.t - b.t); }
+  else { tr.keys.push({ t, v, ease: DEFAULT_EASE, power: DEFAULT_POWER }); tr.keys.sort((a, b) => a.t - b.t); }
 }
 
 export function removeKey(clip: Clip, node: string, prop: AnimProp, t: number) {
@@ -188,12 +209,12 @@ export function parentState(doc: Doc, states: Map<string, NodeState>, id: string
 
 /** アニメーションのデータ（ゲーム側で読み込む JSON） */
 export function animJson(doc: Doc) {
-  const parts: { id: string; name: string; parent: string | null; pivot: [number, number] }[] = [];
+  const parts: { id: string; name: string; parent: string | null; pivot: [number, number]; opacity: number }[] = [];
   const walk = (nodes: LayerNode[], parent: string | null) => {
     for (const n of nodes) {
       if (!n.visible) continue;
       const pv = pivotOf(n);
-      parts.push({ id: n.id, name: n.name, parent, pivot: [+pv.x.toFixed(3), +pv.y.toFixed(3)] });
+      parts.push({ id: n.id, name: n.name, parent, pivot: [+pv.x.toFixed(3), +pv.y.toFixed(3)], opacity: n.opacity ?? 1 });
       if (n.kind === 'folder') walk(n.children, n.id);
     }
   };
@@ -209,7 +230,11 @@ export function animJson(doc: Doc) {
       name: c.name,
       duration: c.duration,
       loop: c.loop,
-      tracks: c.tracks.filter((t) => ids.has(t.node) && t.keys.length).map((t) => ({ part: t.node, property: t.prop, keys: t.keys.map((k) => ({ t: k.t, v: k.v, ease: k.ease })) })),
+      tracks: c.tracks.filter((t) => ids.has(t.node) && t.keys.length).map((t) => ({
+        part: t.node,
+        property: t.prop,
+        keys: t.keys.map((k) => ({ t: k.t, v: k.v, ease: k.ease, ...(EASES.find((e) => e.id === k.ease)?.powered ? { power: k.power ?? DEFAULT_POWER } : {}) })),
+      })),
     })),
   };
 }
@@ -222,9 +247,9 @@ export const HANDOFF_GUIDE = `# アニメーション付き SVG の使い方
 2. **アニメーション JSON**：\`format: "personal-svg-maker-animation"\`。
 
 ## JSON の構造
-- \`parts[]\`：\`id\`（SVG の \`<g id>\` と同じ）、\`name\`、\`parent\`（親パーツの id。一番上は null）、\`pivot\`（[x, y]。回転・拡大縮小の中心。SVG 全体の座標系での値）
+- \`parts[]\`：\`id\`（SVG の \`<g id>\` と同じ）、\`name\`、\`parent\`（親パーツの id。一番上は null）、\`pivot\`（[x, y]。回転・拡大縮小の中心。SVG 全体の座標系での値）、\`opacity\`（パーツそのものの不透明度。SVG の \`<g opacity>\` と同じ値）
 - \`clips[]\`：\`name\`、\`duration\`（秒）、\`loop\`（true ならループ）、\`tracks[]\`
-- \`tracks[]\`：\`part\`、\`property\`、\`keys[]\`（\`t\` 秒、\`v\` 値、\`ease\`）
+- \`tracks[]\`：\`part\`、\`property\`、\`keys[]\`（\`t\` 秒、\`v\` 値、\`ease\`、加速・減速の種類だけ \`power\`）
 
 ## property の意味（すべて「描いたままの状態」からの変化）
 | property | 意味 | 何もないときの値 |
@@ -232,16 +257,21 @@ export const HANDOFF_GUIDE = `# アニメーション付き SVG の使い方
 | rotate | 回転（度、時計回りが正） | 0 |
 | x, y | 移動量（SVG の座標と同じ単位） | 0 |
 | scaleX, scaleY | 倍率 | 1 |
-| opacity | 不透明度（0〜1、親と掛け合わせる） | 1 |
+| opacity | 不透明度（0〜1）。パーツそのものの不透明度（parts[].opacity）にさらに掛け合わせる | 1 |
 
 ## 値の求め方（時刻 t）
 - ループするクリップは \`t = t % duration\`。ループしないものは \`duration\` で止める。
 - 最初のキーより前は最初のキーの値、最後のキーより後は最後のキーの値。
 - キー a と次のキー b の間：\`u = (t - a.t) / (b.t - a.t)\`、\`v = a.v + (b.v - a.v) * f(u)\`。
   - \`ease\` は **キー a 側** の値を使う。
-  - \`"smooth"\`：\`f(u) = u * u * (3 - 2 * u)\`（加速して減速）
+  - \`n = power\`（なければ 2）
   - \`"linear"\`：\`f(u) = u\`（等速）
-  - \`"step"\`：\`f(u) = 0\`（次のキーの時刻で瞬時に切り替わる）
+  - \`"step"\`：\`f(u) = u > 0 ? 1 : 0\`（区間に入った瞬間に b の値になり、あとは動かない）
+  - \`"inOut"\`：\`u < 0.5 ? (2u)^n / 2 : 1 - (2(1-u))^n / 2\`（加速して、中点から減速）
+  - \`"in"\`：\`f(u) = u^n\`（加速）
+  - \`"out"\`：\`f(u) = 1 - (1-u)^n\`（減速）
+  - \`"circIn"\`：\`f(u) = 1 - sqrt(1 - u^2)\`（円軌道で加速）
+  - \`"circOut"\`：\`f(u) = sqrt(1 - (1-u)^2)\`（円軌道で減速）
 
 ## 変換のかけ方
 各パーツの \`<g>\` に、次の transform を設定します（pivot = [px, py]）。
@@ -250,17 +280,28 @@ export const HANDOFF_GUIDE = `# アニメーション付き SVG の使い方
 translate(px + x, py + y) rotate(rotate) scale(scaleX, scaleY) translate(-px, -py)
 \`\`\`
 
-\`<g>\` が入れ子になっているので、親パーツの動きは自動的に子パーツにも及びます。pivot は全パーツ共通の座標系（SVG 全体）で書かれていますが、親が動いていない状態での位置なので、上の式をそのまま各 \`<g>\` に入れれば正しく合成されます。opacity は \`<g>\` の opacity 属性に入れれば親と掛け合わさります。
+\`<g>\` が入れ子になっているので、親パーツの動きは自動的に子パーツにも及びます。pivot は全パーツ共通の座標系（SVG 全体）で書かれていますが、親が動いていない状態での位置なので、上の式をそのまま各 \`<g>\` に入れれば正しく合成されます。\`<g>\` の opacity 属性には \`parts[].opacity × アニメーションの opacity\` を入れてください（親の \`<g>\` の opacity とは自動で掛け合わさります）。
 
 ## 参考：ブラウザでの再生コード（SVG を DOM に埋め込んだ場合）
 \`\`\`js
-function ease(e, u) { return e === 'step' ? 0 : e === 'linear' ? u : u * u * (3 - 2 * u); }
+function ease(e, u, n = 2) {
+  switch (e) {
+    case 'linear': return u;
+    case 'step': return u > 0 ? 1 : 0;
+    case 'in': return u ** n;
+    case 'out': return 1 - (1 - u) ** n;
+    case 'inOut': return u < 0.5 ? (2 * u) ** n / 2 : 1 - (2 * (1 - u)) ** n / 2;
+    case 'circIn': return 1 - Math.sqrt(1 - u * u);
+    case 'circOut': return Math.sqrt(1 - (1 - u) ** 2);
+  }
+  return u;
+}
 function sample(keys, t, def) {
   if (!keys.length) return def;
   if (t <= keys[0].t) return keys[0].v;
   for (let i = 0; i + 1 < keys.length; i++) {
     const a = keys[i], b = keys[i + 1];
-    if (t < b.t) return a.v + (b.v - a.v) * ease(a.ease, (t - a.t) / (b.t - a.t));
+    if (t < b.t) return a.v + (b.v - a.v) * ease(a.ease, (t - a.t) / (b.t - a.t), a.power);
   }
   return keys[keys.length - 1].v;
 }
@@ -274,7 +315,7 @@ function applyClip(svgRoot, anim, clip, time) {
     if (!g) continue;
     const [px, py] = part.pivot;
     g.setAttribute('transform', \`translate(\${px + v.x} \${py + v.y}) rotate(\${v.rotate}) scale(\${v.scaleX} \${v.scaleY}) translate(\${-px} \${-py})\`);
-    g.setAttribute('opacity', v.opacity);
+    g.setAttribute('opacity', part.opacity * v.opacity);
   }
 }
 // 使い方：毎フレーム applyClip(svg, anim, anim.clips[0], 経過秒数)

@@ -1,7 +1,9 @@
 import type { App } from './app';
-import type { AnimProp, Clip, LayerNode } from './types';
+import type { AnimProp, Clip, Keyframe, LayerNode, UnderlayFrame } from './types';
+import { fitPlacement, importImageFile } from './underlay';
+import type { UnderlayTool } from './tools/underlay';
 import { findNode } from './doc';
-import { addWiggle, EASES, findTrack, newClip, PROPS, removeKey, restPose, setKey } from './anim';
+import { addWiggle, DEFAULT_POWER, EASES, findTrack, newClip, POWERS, PROPS, removeKey, restPose, setKey } from './anim';
 import { askConfirm, askText, el, escapeHtml } from './dialogs';
 import type { PoseTool } from './tools/pose';
 
@@ -9,13 +11,24 @@ import type { PoseTool } from './tools/pose';
  * タイムライン（アニメーション中、キャンバスの下に表示する）。
  * クリップの切り替え・再生・時刻の移動、選んでいるパーツのキーの表示と編集、揺れの追加。
  */
+function pickImage(): Promise<File | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.addEventListener('change', () => resolve(input.files?.[0] ?? null));
+    input.click();
+  });
+}
+
 export function buildTimeline(root: HTMLElement, app: App): () => void {
   root.innerHTML = '';
   const controls = el('div', 'tl-row tl-controls');
   const scrubRow = el('div', 'tl-row');
   const tracks = el('div', 'tl-tracks');
   const keyRow = el('div', 'tl-row tl-key');
-  root.append(controls, scrubRow, tracks, keyRow);
+  const frameRow = el('div', 'tl-row tl-frames');
+  root.append(controls, scrubRow, tracks, keyRow, frameRow);
 
   const scrub = el('input', 'tl-scrub');
   scrub.type = 'range';
@@ -207,6 +220,20 @@ export function buildTimeline(root: HTMLElement, app: App): () => void {
       l.append(el('span', 'tl-playhead'));
       return l;
     };
+    // アニメーションの下書き：その時刻から次の下書きまで表示する
+    if (clip?.underlays.length) {
+      const r = el('div', 'tl-track underlay');
+      r.append(el('span', 'tl-name', '下書き'));
+      r.append(lane(clip.underlays, (t) => {
+        const f = clip.underlays.find((x) => Math.abs(x.t - t) < 1e-6);
+        app.anim.selFrame = f?.id ?? null;
+        app.anim.selKey = null;
+        app.anim.playing = false;
+        app.setTime(t);
+        sync(true);
+      }, (t) => clip.underlays.some((x) => x.id === app.anim.selFrame && Math.abs(x.t - t) < 1e-6)));
+      rows.push(r);
+    }
     if (node) {
       // 動きのある項目だけを並べる（キャンバスを広く使うため）
       for (const p of PROPS) {
@@ -291,18 +318,62 @@ export function buildTimeline(root: HTMLElement, app: App): () => void {
         if (Number.isFinite(v)) editClip((c) => setKey(c, sk.node, sk.prop, sk.t, v));
       });
       items.push(el('span', 'opt-sep'), el('span', 'opt-label', `${p.label}のキー（${sk.t.toFixed(2)}秒）`), val);
+      const editKey = (fn: (k: Keyframe) => void) =>
+        editClip((c) => { const k = findTrack(c, sk.node, sk.prop)?.keys.find((x) => Math.abs(x.t - sk.t) < 1e-3); if (k) fn(k); });
+      items.push(el('span', 'opt-label', '次のキーまで'));
       for (const e of EASES)
-        items.push(btn(e.label, () => editClip((c) => { const k = findTrack(c, sk.node, sk.prop)?.keys.find((x) => Math.abs(x.t - sk.t) < 1e-3); if (k) k.ease = e.id; }), { active: key.ease === e.id, title: '次のキーまでのつなぎ方' }));
+        items.push(btn(e.label, () => editKey((k) => { k.ease = e.id; if (e.powered) k.power ??= DEFAULT_POWER; }), { active: key.ease === e.id }));
+      if (EASES.find((e) => e.id === key.ease)?.powered) {
+        items.push(el('span', 'opt-label', '鋭さ'));
+        for (const p of POWERS) items.push(btn(p.label, () => editKey((k) => (k.power = p.v)), { active: (key.power ?? DEFAULT_POWER) === p.v }));
+      }
       items.push(btn('キーを削除', () => { editClip((c) => removeKey(c, sk.node, sk.prop, sk.t)); app.anim.selKey = null; }, { cls: 'danger' }));
     }
     keyRow.replaceChildren(...items);
+    // アニメーションの下書き
+    const fitems: HTMLElement[] = [];
+    fitems.push(btn('下書きを追加', async () => {
+      const f = await pickImage();
+      if (!f) return;
+      try {
+        ensureClip();
+        const img = await importImageFile(f);
+        const t = +app.anim.time.toFixed(3);
+        const frame: UnderlayFrame = { ...fitPlacement(app.doc, img.id, img.width, img.height), t };
+        const cid = app.currentClip()!.id;
+        app.mutate((d) => {
+          const c = d.animations.find((x) => x.id === cid);
+          if (!c) return;
+          c.underlays = [...c.underlays.filter((x) => Math.abs(x.t - t) > 1e-6), frame].sort((a, b) => a.t - b.t);
+        });
+        app.anim.selFrame = frame.id;
+        app.setStatus(`${t.toFixed(2)}秒から表示する下書きを追加しました`);
+      } catch (e) {
+        app.setStatus(`画像を読み込めませんでした（${(e as Error).message}）`);
+      }
+    }, { title: '今の時刻から、次の下書きの時刻まで表示する下書き画像を追加します' }));
+    const frame = clip?.underlays.find((x) => x.id === app.anim.selFrame);
+    if (clip && frame) {
+      const editFrame = (fn: (f: UnderlayFrame) => void) => editClip((c) => { const f = c.underlays.find((x) => x.id === frame.id); if (f) fn(f); c.underlays.sort((a, b) => a.t - b.t); });
+      const op = el('input', 'num-input');
+      op.type = 'number'; op.inputMode = 'numeric'; op.min = '0'; op.max = '100'; op.step = '10'; op.id = 'tl-frame-opacity';
+      op.value = String(Math.round(frame.opacity * 100));
+      op.addEventListener('change', () => { const v = Math.max(0, Math.min(100, Number(op.value))); if (Number.isFinite(v)) editFrame((f) => (f.opacity = v / 100)); });
+      fitems.push(
+        el('span', 'opt-label', `下書き（${frame.t.toFixed(2)}秒から）不透明度`), op, el('span', 'opt-label', '%'),
+        btn('位置', () => (app.tools.underlay as UnderlayTool).begin({ kind: 'clip', clip: clip.id, id: frame.id })),
+        btn('今の時刻へ移す', () => editFrame((f) => (f.t = +app.anim.time.toFixed(3)))),
+        btn('下書きを削除', () => { editClip((c) => (c.underlays = c.underlays.filter((x) => x.id !== frame.id))); app.anim.selFrame = null; }, { cls: 'danger' }),
+      );
+    } else if (clip?.underlays.length) fitems.push(el('span', 'opt-label', '下書きの行の印をタップすると、不透明度・位置・時刻を変えられます'));
+    frameRow.replaceChildren(...fitems);
   }
 
   let signature = '';
   /** 構造が変わったときだけ作り直し、時刻だけなら位置を更新する */
   function sync(force = false) {
     const clip = app.currentClip();
-    const sig = JSON.stringify([clip, app.doc.activeId, app.anim.selKey, app.anim.playing, app.doc.animations.map((c) => [c.id, c.name])]);
+    const sig = JSON.stringify([clip, app.doc.activeId, app.anim.selKey, app.anim.selFrame, app.anim.playing, app.doc.animations.map((c) => [c.id, c.name])]);
     if (force || sig !== signature) {
       signature = sig;
       buildControls(clip);

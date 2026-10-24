@@ -5,6 +5,7 @@ import { applyFill, fillFace, layerFaces } from '../fills';
 import { faceAt, traceFace, type Face } from '../regions';
 import { COLORS, inWorld, paintFace } from '../render';
 import { button, label, PointPicker, separator } from './common';
+import { alphaPercent, joinColor, splitColor } from '../color';
 
 type Mode = 'solid' | 'linear' | 'pick' | 'erase';
 
@@ -132,7 +133,7 @@ export class FillTool implements Tool {
   hint() {
     if (this.mode === 'linear') {
       if (!this.target) return 'グラデーションをかける範囲をタップ';
-      return (this.start ? `終点（${this.color2} になる位置）をタップ` : `始点（${this.color} になる位置）をタップ`);
+      return this.start ? '終点（終点の色になる位置）をタップ' : '始点（始点の色になる位置）をタップ';
     }
     if (this.mode === 'pick') return '色を取りたい塗りをタップ';
     if (this.mode === 'erase') return '塗りを消す範囲をタップ';
@@ -158,8 +159,9 @@ export class FillTool implements Tool {
       for (const c of this.recent) {
         const b = document.createElement('button');
         b.className = 'swatch';
-        b.style.background = c;
-        b.title = c;
+        // 半透明の色は市松模様の上に表示する
+        b.style.background = `linear-gradient(${c}, ${c}), repeating-conic-gradient(#bbb 0 25%, #fff 0 50%) 0 0 / 10px 10px`;
+        b.title = `${splitColor(c).hex} 不透明度 ${alphaPercent(c)}%`;
         b.addEventListener('click', () => { this.color = c; if (this.mode === 'pick') this.mode = 'solid'; app.refreshUI(); });
         sw.append(b);
       }
@@ -222,14 +224,32 @@ function dot(ctx: CanvasRenderingContext2D, p: Vec, color: string) {
   ctx.stroke();
 }
 
-/** 色の入力。色を選んでいる最中に作り直されないよう、input では再描画だけ行う */
+/**
+ * 色の入力（不透明度込み）。色を選んでいる最中に作り直されないよう、入力中は再描画だけ行う。
+ * 同じ色でも不透明度が違えば別の色として扱う。
+ */
 function colorInput(text: string, value: string, onInput: (c: string) => void) {
   const wrap = document.createElement('label');
   wrap.className = 'color-field';
+  const { hex, alpha } = splitColor(value);
   const input = document.createElement('input');
   input.type = 'color';
-  input.value = value;
-  input.addEventListener('input', () => onInput(input.value));
-  wrap.append(label(text), input);
+  input.value = hex;
+  const a = document.createElement('input');
+  a.type = 'number';
+  a.inputMode = 'numeric';
+  a.min = '0';
+  a.max = '100';
+  a.step = '5';
+  a.className = 'alpha-input';
+  a.value = String(Math.round(alpha * 100));
+  a.title = '不透明度（%）';
+  const emit = () => {
+    const v = Number(a.value);
+    onInput(joinColor(input.value, Number.isFinite(v) ? v / 100 : 1));
+  };
+  input.addEventListener('input', emit);
+  a.addEventListener('input', emit);
+  wrap.append(label(text), input, a, label('%'));
   return wrap;
 }

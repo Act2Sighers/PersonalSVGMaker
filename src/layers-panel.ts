@@ -16,7 +16,24 @@ export function buildLayersPanel(panel: HTMLElement, app: App): () => void {
   panel.innerHTML = '';
   const list = el('div', 'layer-list');
   const actions = el('div', 'layer-actions');
-  panel.append(el('h3', 'panel-title', 'レイヤー'), list, actions);
+  // 選んでいるレイヤー・フォルダーの不透明度
+  const opRow = el('label', 'row');
+  const op = el('input', 'alpha-input');
+  op.type = 'number'; op.inputMode = 'numeric'; op.min = '0'; op.max = '100'; op.step = '5'; op.id = 'layer-opacity';
+  op.addEventListener('change', () => {
+    const v = Math.max(0, Math.min(100, Number(op.value)));
+    if (!Number.isFinite(v)) return;
+    app.mutate((d) => {
+      const n = findNode(d, d.activeId)?.node;
+      if (!n) return;
+      if (v >= 100) delete n.opacity;
+      else n.opacity = v / 100;
+    });
+  });
+  const opWrap = el('span', 'tl-inline');
+  opWrap.append(op, el('span', '', '%'));
+  opRow.append(el('span', '', '不透明度（選んでいる項目）'), opWrap);
+  panel.append(el('h3', 'panel-title', 'レイヤー'), list, opRow, actions);
 
   const act = (label: string, title: string, fn: () => void) => {
     const b = el('button', 'opt-btn', label);
@@ -97,6 +114,7 @@ export function buildLayersPanel(panel: HTMLElement, app: App): () => void {
       }));
     }
     const name = el('span', 'layer-name', (n.kind === 'folder' ? FOLDER : '') + `<span>${escapeHtml(n.name)}</span>`);
+    if ((n.opacity ?? 1) < 1) name.append(el('small', 'layer-op', `${Math.round(n.opacity! * 100)}%`));
     if (n.kind === 'layer') name.append(el('small', '', `${n.shapes.length}`));
     r.append(name);
     r.addEventListener('click', () => {
@@ -123,6 +141,7 @@ export function buildLayersPanel(panel: HTMLElement, app: App): () => void {
     };
     walk(app.doc.layers, 0, false);
     list.replaceChildren(...rows);
+    if (document.activeElement !== op) op.value = String(Math.round((findNode(app.doc, activeId())?.node.opacity ?? 1) * 100));
     if (!app.sel.size) choosingTarget = false;
     moveTo.disabled = !app.sel.size;
     moveTo.classList.toggle('active', choosingTarget);

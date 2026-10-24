@@ -8,7 +8,7 @@ import type { ClipData } from './clipboard';
 import { SnapContext, type SnapOptions } from './snap';
 import { saveProject, saveSettings, setLastProjectId } from './storage';
 
-export type ToolId = 'select' | 'move' | 'transform' | 'line' | 'bezier' | 'circle' | 'freehand' | 'fill' | 'pick' | 'pose';
+export type ToolId = 'select' | 'move' | 'transform' | 'line' | 'bezier' | 'circle' | 'freehand' | 'fill' | 'pick' | 'pose' | 'underlay';
 export type InputMode = 'pen' | 'hand';
 
 export interface Tool {
@@ -63,6 +63,8 @@ export class App {
     /** 描いたままの状態を表示する（中心点を置くとき） */
     rest: false,
     selKey: null as { node: string; prop: AnimProp; t: number } | null,
+    /** 選んでいるアニメーションの下書き */
+    selFrame: null as string | null,
   };
   /** タイムラインの再描画（時刻だけが変わったとき） */
   onTime: () => void = () => {};

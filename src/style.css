@@ -822,3 +822,58 @@ button:disabled {
   height: 34px;
   width: 70px;
 }
+
+.alpha-input {
+  width: 52px;
+  height: 28px;
+  padding: 0 4px;
+  border-radius: 6px;
+  border: 1px solid #4a4e56;
+  background: #1d1f22;
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+  -webkit-user-select: auto;
+  user-select: auto;
+}
+
+.underlay-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.underlay-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.underlay-row input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--accent);
+}
+.underlay-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.underlay-row .opt-btn {
+  height: 32px;
+  padding: 0 8px;
+}
+
+.layer-name small.layer-op {
+  margin-left: auto;
+  color: #f5b83d;
+}
+.layer-name small.layer-op + small {
+  margin-left: 6px;
+}
+
+.tl-track.underlay .tl-keyframe {
+  background: #16a89a;
+  border-radius: 2px;
+}

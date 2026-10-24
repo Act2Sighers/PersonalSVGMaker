@@ -15,6 +15,7 @@ import { PickTool } from './tools/pick';
 import { TransformTool } from './tools/transform';
 import { FreehandTool } from './tools/freehand';
 import { PoseTool } from './tools/pose';
+import { UnderlayTool } from './tools/underlay';
 import { FillTool } from './tools/fill';
 
 const LOUPE_SIZE = 150;
@@ -33,6 +34,7 @@ async function start() {
     fill: new FillTool(app),
     pick: new PickTool(app),
     pose: new PoseTool(app),
+    underlay: new UnderlayTool(app),
   };
 
   const { canvas, loupe, stage } = buildUI(document.getElementById('app')!, app);

@@ -4,20 +4,23 @@ import type { Doc, ProjectFolder, Settings } from './types';
 const DB_NAME = 'personal-svg-maker';
 const PROJECTS = 'projects';
 const FOLDERS = 'folders';
-type StoreName = typeof PROJECTS | typeof FOLDERS;
+/** 下書き画像（作品の履歴に画像を複製しないよう、作品とは別に保存する） */
+const IMAGES = 'images';
+type StoreName = typeof PROJECTS | typeof FOLDERS | typeof IMAGES;
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
-const memory: Record<StoreName, Map<string, unknown>> = { projects: new Map(), folders: new Map() };
+const memory: Record<StoreName, Map<string, unknown>> = { projects: new Map(), folders: new Map(), images: new Map() };
 
 function openDb(): Promise<IDBDatabase | null> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve) => {
       try {
-        const req = indexedDB.open(DB_NAME, 2);
+        const req = indexedDB.open(DB_NAME, 3);
         req.onupgradeneeded = () => {
           const db = req.result;
           if (!db.objectStoreNames.contains(PROJECTS)) db.createObjectStore(PROJECTS, { keyPath: 'id' });
           if (!db.objectStoreNames.contains(FOLDERS)) db.createObjectStore(FOLDERS, { keyPath: 'id' });
+          if (!db.objectStoreNames.contains(IMAGES)) db.createObjectStore(IMAGES, { keyPath: 'id' });
         };
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => resolve(null);
@@ -65,6 +68,11 @@ export const loadProject = (id: string) => get<Doc>(PROJECTS, id);
 export const deleteProject = (id: string) => del(PROJECTS, id);
 export async function listProjects(): Promise<Doc[]> {
   return (await all<Doc>(PROJECTS)).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export const saveImage = (id: string, data: string) => put(IMAGES, { id, data });
+export async function loadImage(id: string): Promise<string | null> {
+  return (await get<{ id: string; data: string }>(IMAGES, id))?.data ?? null;
 }
 
 export const saveFolder = (f: ProjectFolder) => put(FOLDERS, f);

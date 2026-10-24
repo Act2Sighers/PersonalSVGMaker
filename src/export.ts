@@ -3,6 +3,7 @@ import { fillFace } from './fills';
 import { renderTree } from './doc';
 import { animJson, HANDOFF_GUIDE, pivotOf } from './anim';
 import { faceToPathData } from './regions';
+import { splitColor } from './color';
 
 const n3 = (n: number) => String(+n.toFixed(3));
 
@@ -15,28 +16,41 @@ export interface ExportOptions {
 export function docToSvg(doc: Doc, opts: ExportOptions): string {
   const defs: string[] = [];
   let gid = 0;
-  const paintRef = (p: Paint): string => {
-    if (p.type === 'solid') return p.color;
+  /** 塗りの属性（fill と、半透明なら fill-opacity）。opaque は完全に不透明か */
+  const paintAttrs = (p: Paint): { fill: string; opacity: string; opaque: boolean } => {
+    if (p.type === 'solid') {
+      const { hex, alpha } = splitColor(p.color);
+      return { fill: hex, opacity: alpha < 1 ? ` fill-opacity="${n3(alpha)}"` : '', opaque: alpha >= 1 };
+    }
     const id = `grad${++gid}`;
+    const a = splitColor(p.color), b = splitColor(p.color2);
+    const stop = (offset: number, c: { hex: string; alpha: number }) =>
+      `<stop offset="${offset}" stop-color="${c.hex}"${c.alpha < 1 ? ` stop-opacity="${n3(c.alpha)}"` : ''}/>`;
     defs.push(
       `    <linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${n3(p.x1)}" y1="${n3(p.y1)}" x2="${n3(p.x2)}" y2="${n3(p.y2)}">` +
-        `<stop offset="0" stop-color="${p.color}"/><stop offset="1" stop-color="${p.color2}"/></linearGradient>`,
+        `${stop(0, a)}${stop(1, b)}</linearGradient>`,
     );
-    return `url(#${id})`;
+    return { fill: `url(#${id})`, opacity: '', opaque: a.alpha >= 1 && b.alpha >= 1 };
   };
   const body = renderTree(doc.layers, '  ', (l, ind) =>
     l.fills.flatMap((f) => {
       const face = fillFace(l, f);
       if (!face) return [];
-      const paint = paintRef(f.paint);
-      const seam = opts.seamFix ? ` stroke="${paint}" stroke-width="0.5" stroke-linejoin="round"` : '';
-      return [`${ind}<path id="${f.id}" d="${faceToPathData(face)}" fill="${paint}" fill-rule="evenodd"${seam}/>`];
+      const p = paintAttrs(f.paint);
+      // 半透明の塗りに縁を付けると境目が濃く見えるので、不透明な塗りだけにする
+      const seam = opts.seamFix && p.opaque ? ` stroke="${p.fill}" stroke-width="0.5" stroke-linejoin="round"` : '';
+      return [`${ind}<path id="${f.id}" d="${faceToPathData(face)}" fill="${p.fill}"${p.opacity} fill-rule="evenodd"${seam}/>`];
     }),
-    // アニメーションがある作品では、各パーツの回転・拡大縮小の中心も書いておく
     (n) => {
-      if (!doc.animations.length) return '';
-      const p = pivotOf(n);
-      return ` data-pivot-x="${n3(p.x)}" data-pivot-y="${n3(p.y)}"`;
+      let a = '';
+      // レイヤー・フォルダーの不透明度
+      if ((n.opacity ?? 1) < 1) a += ` opacity="${n3(n.opacity!)}"`;
+      // アニメーションがある作品では、各パーツの回転・拡大縮小の中心も書いておく
+      if (doc.animations.length) {
+        const p = pivotOf(n);
+        a += ` data-pivot-x="${n3(p.x)}" data-pivot-y="${n3(p.y)}"`;
+      }
+      return a;
     },
   );
   const defsBlock = defs.length ? `  <defs>\n${defs.join('\n')}\n  </defs>\n` : '';

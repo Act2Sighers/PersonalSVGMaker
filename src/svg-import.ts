@@ -2,6 +2,7 @@ import type { Folder, Layer, LayerNode, Paint, PathNode, Shape, Vec } from './ty
 import { newFolder, newLayer, shapePrims, transformShape, uid } from './doc';
 import { applyAffine, type Affine } from './geom';
 import { computeFaces } from './regions';
+import { joinColor } from './color';
 
 /**
  * 外部の SVG を取り込む。
@@ -248,29 +249,35 @@ function elementSubs(el: SVGElement): { subs: Sub[]; circle?: { cx: number; cy: 
 // ── 色
 
 let colorCtx: CanvasRenderingContext2D | null = null;
-/** CSS の色を #rrggbb にする。透明なら null */
-function normalizeColor(c: string): string | null {
+/** CSS の色を #rrggbb（半透明なら #rrggbbaa）にする。透明なら null。opacity は別に指定された不透明度 */
+function normalizeColor(c: string, opacity = 1): string | null {
   colorCtx ??= document.createElement('canvas').getContext('2d');
   if (!colorCtx) return null;
   colorCtx.fillStyle = '#000000';
   colorCtx.fillStyle = c;
   const v = String(colorCtx.fillStyle);
-  if (v.startsWith('#')) return v;
-  const m = v.match(/rgba?\(([^)]+)\)/);
-  if (!m) return null;
-  const [r, g, b, a] = m[1].split(',').map((x) => Number(x.trim()));
-  if (a === 0) return null;
-  return '#' + [r, g, b].map((x) => Math.round(x).toString(16).padStart(2, '0')).join('');
+  let hex: string, alpha = 1;
+  if (v.startsWith('#')) hex = v.slice(0, 7);
+  else {
+    const m = v.match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    const [r, g, b, a] = m[1].split(',').map((x) => Number(x.trim()));
+    hex = '#' + [r, g, b].map((x) => Math.round(x).toString(16).padStart(2, '0')).join('');
+    if (Number.isFinite(a)) alpha = a;
+  }
+  alpha *= Number.isFinite(opacity) ? opacity : 1;
+  if (alpha <= 0) return null;
+  return joinColor(hex, alpha);
 }
 
 const toAffine = (m: DOMMatrix): Affine => ({ a: m.a, b: m.b, c: m.c, d: m.d, e: m.e, f: m.f });
 
 /** 塗りの指定を、このツールの塗りに置き換える（グラデーションは最初と最後の色の線形にする） */
-function resolvePaint(el: SVGGraphicsElement, fill: string, m: Affine, root: SVGSVGElement): Paint | null {
+function resolvePaint(el: SVGGraphicsElement, fill: string, m: Affine, root: SVGSVGElement, fillOpacity: number): Paint | null {
   if (!fill || fill === 'none') return null;
   const url = fill.match(/url\(["']?#([^"')]+)["']?\)/);
   if (!url) {
-    const c = normalizeColor(fill);
+    const c = normalizeColor(fill, fillOpacity);
     return c ? { type: 'solid', color: c } : null;
   }
   let g = root.querySelector(`[id="${CSS.escape(url[1])}"]`) as SVGGradientElement | null;
@@ -283,7 +290,10 @@ function resolvePaint(el: SVGGraphicsElement, fill: string, m: Affine, root: SVG
   }
   const stops = [...(stopsFrom?.querySelectorAll('stop') ?? [])];
   if (!stops.length) return null;
-  const color = (s: Element) => normalizeColor(getComputedStyle(s).stopColor) ?? '#000000';
+  const color = (s: Element) => {
+    const cs = getComputedStyle(s);
+    return normalizeColor(cs.stopColor, Number(cs.stopOpacity) * fillOpacity) ?? '#00000000';
+  };
   const c1 = color(stops[0]), c2 = color(stops[stops.length - 1]);
   if (g.tagName !== 'linearGradient' || stops.length === 1) return { type: 'solid', color: c1 };
   const lg = g as SVGLinearGradientElement;
@@ -383,7 +393,7 @@ export function importSvg(text: string): ImportResult {
         const g = el as SVGGraphicsElement;
         const m = matrixOf(g);
         const cs = getComputedStyle(g);
-        const paint = Number(cs.fillOpacity) === 0 ? null : resolvePaint(g, cs.fill, m, root);
+        const paint = resolvePaint(g, cs.fill, m, root, Number(cs.fillOpacity));
         const { subs, circle } = elementSubs(g);
         const shapes: Shape[] = [];
         if (circle && isSimilarity(m)) {
@@ -431,11 +441,15 @@ export function importSvg(text: string): ImportResult {
         if (el.tagName === 'g' && !hidden(el)) {
           flushLoose();
           const hasGroups = [...el.children].some((c) => c.tagName === 'g');
+          // <g opacity> はレイヤー・フォルダーの不透明度にする
+          const op = Number(el.getAttribute('opacity') ?? (el as SVGElement).style?.opacity ?? '');
+          const opacity = Number.isFinite(op) && op > 0 && op < 1 ? op : undefined;
           if (hasGroups) {
-            const f: Folder = { ...newFolder(nameOf(el, () => `フォルダー ${++folderNo}`)), children: build(el) };
+            const f: Folder = { ...newFolder(nameOf(el, () => `フォルダー ${++folderNo}`)), children: build(el), ...(opacity ? { opacity } : {}) };
             if (f.children.length) out.push(f);
           } else {
             const l = newLayer(nameOf(el, () => `レイヤー ${++layerNo}`));
+            if (opacity) l.opacity = opacity;
             fillLayer(l, [...el.children]);
             if (l.shapes.length) out.push(l);
           }

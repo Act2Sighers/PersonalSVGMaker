@@ -1,10 +1,11 @@
 import type { App } from './app';
 import type { View } from './view';
-import type { Layer, Paint, Shape, Vec } from './types';
+import type { Layer, LayerNode, Paint, Shape, UnderlayPlacement, Vec } from './types';
 import { layerFaces } from './fills';
 import { faceAt, traceFace, type Face } from './regions';
-import { nodeStates } from './anim';
-import { allShapes, anchorKeys, layerEntries, selectableShapes, getPoint, ref, shapePrims } from './doc';
+import { nodeStates, type NodeState, type Pose } from './anim';
+import { currentFrame, getImage } from './underlay';
+import { allShapes, anchorKeys, selectableShapes, getPoint, ref, shapePrims } from './doc';
 import type { Prim } from './geom';
 import type { SnapResult } from './snap';
 
@@ -183,6 +184,68 @@ function drawFills(ctx: CanvasRenderingContext2D, layer: Layer) {
   }
 }
 
+/** 半透明のフォルダーを描くための作業用キャンバス（入れ子の深さごとに使い回す） */
+const offscreens: HTMLCanvasElement[] = [];
+function offscreen(depth: number, o: DrawOpts): CanvasRenderingContext2D {
+  const c = (offscreens[depth] ??= document.createElement('canvas'));
+  const w = Math.round(o.w * o.dpr), h = Math.round(o.h * o.dpr);
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const ctx = c.getContext('2d')!;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return ctx;
+}
+
+/**
+ * レイヤーの木を描く。不透明度はレイヤー・フォルダーそのものの値に、アニメーションの値を掛け合わせる。
+ * 半透明のフォルダーは、中身をまとめて描いてから薄くする（中で重なった所が二重に透けないように）。
+ */
+function drawTree(ctx: CanvasRenderingContext2D, view: View, nodes: LayerNode[], poses: Map<string, Pose>, states: Map<string, NodeState> | null, lines: boolean, o: DrawOpts, depth: number) {
+  for (const n of nodes) {
+    if (!n.visible) continue;
+    const own = Math.max(0, Math.min(1, (n.opacity ?? 1) * (poses.get(n.id)?.opacity ?? 1)));
+    if (own <= 0) continue;
+    if (n.kind === 'folder') {
+      if (own >= 0.999) { drawTree(ctx, view, n.children, poses, states, lines, o, depth); continue; }
+      const off = offscreen(depth, o);
+      off.setTransform(ctx.getTransform());
+      drawTree(off, view, n.children, poses, states, lines, o, depth + 1);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = own;
+      ctx.drawImage(off.canvas, 0, 0);
+      ctx.restore();
+      continue;
+    }
+    ctx.save();
+    const st = states?.get(n.id);
+    if (st) ctx.transform(st.m.a, st.m.b, st.m.c, st.m.d, st.m.e, st.m.f);
+    ctx.globalAlpha = own;
+    drawFills(ctx, n);
+    if (lines) strokeShapes(ctx, view, n.shapes, COLORS.line);
+    ctx.restore();
+  }
+}
+
+/** 下書き画像（形の編集中は作品の下書き、アニメーション中はクリップの下書きがあればそちら） */
+function drawUnderlays(ctx: CanvasRenderingContext2D, app: App) {
+  const list: UnderlayPlacement[] = [];
+  const frame = app.anim.active ? currentFrame(app.currentClip(), app.anim.time) : null;
+  if (frame) list.push(frame);
+  else for (const u of app.doc.underlays) if (u.visible) list.push(u);
+  // 位置合わせ中は、動かしている途中の位置で表示する
+  const ut = app.toolId === 'underlay' ? (app.tools.underlay as unknown as { offset(): Vec | null; targetId(): string | null }) : null;
+  for (const u of list) {
+    const img = getImage(u.image, () => app.requestRender());
+    if (!img) continue;
+    const d = ut && ut.targetId() === u.id ? ut.offset() : null;
+    ctx.save();
+    ctx.globalAlpha = u.opacity;
+    ctx.drawImage(img, u.x + (d?.x ?? 0), u.y + (d?.y ?? 0), u.w, u.h);
+    ctx.restore();
+  }
+}
+
 export interface DrawOpts {
   dpr: number;
   w: number;
@@ -203,25 +266,18 @@ export function drawScene(ctx: CanvasRenderingContext2D, app: App, view: View, o
   ctx.lineWidth = 1 / view.zoom;
   ctx.strokeRect(0, 0, app.doc.width, app.doc.height);
 
+  drawUnderlays(ctx, app);
+
   if (app.anim.active) {
     // アニメーション中：パーツごとにポーズの変換と不透明度をかけて描く
-    const states = nodeStates(app.doc, app.poses());
-    for (const e of layerEntries(app.doc)) {
-      if (!e.visible) continue;
-      const st = states.get(e.layer.id)!;
-      ctx.save();
-      ctx.transform(st.m.a, st.m.b, st.m.c, st.m.d, st.m.e, st.m.f);
-      ctx.globalAlpha = Math.max(0, Math.min(1, st.opacity));
-      drawFills(ctx, e.layer);
-      if (app.settings.showLines) strokeShapes(ctx, view, e.layer.shapes, COLORS.line);
-      ctx.restore();
-    }
+    const poses = app.poses();
+    drawTree(ctx, view, app.doc.layers, poses, nodeStates(app.doc, poses), app.settings.showLines, o, 0);
     screenTransform(ctx, dpr);
     app.tool.overlay(ctx, view);
     return;
   }
 
-  for (const e of layerEntries(app.doc)) if (e.visible) drawFills(ctx, e.layer);
+  drawTree(ctx, view, app.doc.layers, new Map(), null, false, o, 0);
 
   const shapes = allShapes(app.doc);
   const sel = app.sel;
