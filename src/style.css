@@ -16,6 +16,9 @@
 * {
   box-sizing: border-box;
 }
+[hidden] {
+  display: none !important;
+}
 
 html,
 body {
@@ -670,4 +673,152 @@ button:disabled {
 }
 .modal.small .proj-list {
   max-height: 50vh;
+}
+
+/* ── アニメーション */
+.center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.center > .stage {
+  flex: 1;
+  min-height: 0;
+}
+.timeline {
+  flex: none;
+  max-height: 36vh;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  background: var(--bar);
+  border-top: 1px solid var(--bar-edge);
+  overflow-y: auto;
+}
+.tl-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.tl-row .opt-label {
+  text-shadow: none;
+  color: var(--muted);
+}
+.tl-scrub {
+  flex: 1;
+  min-width: 200px;
+  height: 32px;
+  accent-color: var(--accent);
+}
+.tl-time {
+  min-width: 120px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.tl-tracks {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.tl-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+.tl-track.empty .tl-name {
+  color: var(--muted);
+}
+.tl-name {
+  width: 110px;
+  flex: none;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-name.link {
+  border: none;
+  background: none;
+  text-align: left;
+  color: var(--accent);
+  padding: 0;
+}
+.tl-lane {
+  position: relative;
+  flex: 1;
+  height: 26px;
+  border-radius: 6px;
+  background: #1d1f22;
+  cursor: pointer;
+}
+.tl-track.other .tl-lane {
+  height: 22px;
+  opacity: 0.8;
+}
+.tl-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.tl-tick.major {
+  background: rgba(255, 255, 255, 0.16);
+}
+.tl-playhead {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--danger);
+  pointer-events: none;
+}
+.tl-keyframe {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  padding: 0;
+  border: 2px solid #1d1f22;
+  background: #f5b83d;
+  transform: rotate(45deg);
+  border-radius: 3px;
+}
+.tl-keyframe.sel {
+  background: #fff;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.tl-track.other .tl-keyframe {
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-width: 1px;
+}
+.tl-key {
+  min-height: 38px;
+}
+
+.timeline .note {
+  margin: 2px 0;
+}
+.timeline .opt-btn {
+  height: 34px;
+  padding: 0 11px;
+}
+
+.tl-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.timeline .num-input {
+  height: 34px;
+  width: 70px;
 }

@@ -3,6 +3,7 @@ import type { View } from './view';
 import type { Layer, Paint, Shape, Vec } from './types';
 import { layerFaces } from './fills';
 import { faceAt, traceFace, type Face } from './regions';
+import { nodeStates } from './anim';
 import { allShapes, anchorKeys, layerEntries, selectableShapes, getPoint, ref, shapePrims } from './doc';
 import type { Prim } from './geom';
 import type { SnapResult } from './snap';
@@ -201,6 +202,24 @@ export function drawScene(ctx: CanvasRenderingContext2D, app: App, view: View, o
   ctx.strokeStyle = COLORS.boardEdge;
   ctx.lineWidth = 1 / view.zoom;
   ctx.strokeRect(0, 0, app.doc.width, app.doc.height);
+
+  if (app.anim.active) {
+    // アニメーション中：パーツごとにポーズの変換と不透明度をかけて描く
+    const states = nodeStates(app.doc, app.poses());
+    for (const e of layerEntries(app.doc)) {
+      if (!e.visible) continue;
+      const st = states.get(e.layer.id)!;
+      ctx.save();
+      ctx.transform(st.m.a, st.m.b, st.m.c, st.m.d, st.m.e, st.m.f);
+      ctx.globalAlpha = Math.max(0, Math.min(1, st.opacity));
+      drawFills(ctx, e.layer);
+      if (app.settings.showLines) strokeShapes(ctx, view, e.layer.shapes, COLORS.line);
+      ctx.restore();
+    }
+    screenTransform(ctx, dpr);
+    app.tool.overlay(ctx, view);
+    return;
+  }
 
   for (const e of layerEntries(app.doc)) if (e.visible) drawFills(ctx, e.layer);
 

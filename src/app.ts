@@ -1,4 +1,5 @@
-import type { Doc, Layer, PointRef, Settings, Shape, Vec } from './types';
+import type { AnimProp, Clip, Doc, Layer, PointRef, Settings, Shape, Vec } from './types';
+import { evalClip, newClip, type Pose } from './anim';
 import { View } from './view';
 import { History } from './history';
 import { allShapes, cloneDoc, cloneShapes, layerEntries, mirrorMatrix, newDoc, normalizeDoc, pruneSelection, transformShape } from './doc';
@@ -7,7 +8,7 @@ import type { ClipData } from './clipboard';
 import { SnapContext, type SnapOptions } from './snap';
 import { saveProject, saveSettings, setLastProjectId } from './storage';
 
-export type ToolId = 'select' | 'move' | 'transform' | 'line' | 'bezier' | 'circle' | 'freehand' | 'fill' | 'pick';
+export type ToolId = 'select' | 'move' | 'transform' | 'line' | 'bezier' | 'circle' | 'freehand' | 'fill' | 'pick' | 'pose';
 export type InputMode = 'pen' | 'hand';
 
 export interface Tool {
@@ -51,7 +52,58 @@ export class App {
   onUI: () => void = () => {};
   fitView: () => void = () => {};
 
+  /** アニメーションの編集状態（作品には保存しない） */
+  anim = {
+    active: false,
+    clipId: null as string | null,
+    time: 0,
+    playing: false,
+    /** 指で動かしている最中のポーズ（確定前） */
+    override: null as Map<string, Pose> | null,
+    /** 描いたままの状態を表示する（中心点を置くとき） */
+    rest: false,
+    selKey: null as { node: string; prop: AnimProp; t: number } | null,
+  };
+  /** タイムラインの再描画（時刻だけが変わったとき） */
+  onTime: () => void = () => {};
+
   constructor(public settings: Settings) {}
+
+  currentClip(): Clip | null {
+    const list = this.doc.animations;
+    return list.find((c) => c.id === this.anim.clipId) ?? list[0] ?? null;
+  }
+
+  /** 今の時刻の、各パーツのポーズ */
+  poses(): Map<string, Pose> {
+    if (!this.anim.active || this.anim.rest) return new Map();
+    const m = evalClip(this.currentClip(), this.anim.time);
+    if (this.anim.override) for (const [k, v] of this.anim.override) m.set(k, v);
+    return m;
+  }
+
+  setAnimActive(on: boolean) {
+    // 最初のクリップは自動で用意する（作品の変更として履歴には残さない）
+    if (on && !this.doc.animations.length) {
+      this.doc.animations.push(newClip('待機'));
+      this.scheduleSave();
+    }
+    this.anim.active = on;
+    this.anim.playing = false;
+    this.anim.override = null;
+    this.anim.selKey = null;
+    this.sel.clear();
+    this.setTool(on ? 'pose' : 'select');
+    this.refreshUI();
+  }
+
+  setTime(t: number) {
+    const clip = this.currentClip();
+    const d = clip?.duration ?? 0;
+    this.anim.time = Math.max(0, Math.min(d, t));
+    this.onTime();
+    this.requestRender();
+  }
 
   get tool(): Tool {
     return this.tools[this.toolId];

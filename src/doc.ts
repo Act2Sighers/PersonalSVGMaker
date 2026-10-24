@@ -24,6 +24,7 @@ export function newDoc(name = '無題', width = 512, height = 512): Doc {
     mirror: { axis: 'none', x: width / 2, y: height / 2 },
     layers: [layer],
     activeId: layer.id,
+    animations: [],
     createdAt: now,
     updatedAt: now,
   };
@@ -52,6 +53,7 @@ export function normalizeDoc(d: Doc): Doc {
   };
   fix(d.layers);
   d.mirror ??= { axis: 'none', x: d.width / 2, y: d.height / 2 };
+  d.animations ??= [];
   if (!d.activeId || !findNode(d, d.activeId)) d.activeId = allLayers(d).at(-1)?.id ?? '';
   return d;
 }
@@ -330,12 +332,12 @@ export function docToLineSvg(doc: Doc): string {
 }
 
 /** レイヤーの木を、フォルダーとレイヤーごとの <g> に書き出す（非表示のものは出さない） */
-export function renderTree(nodes: LayerNode[], ind: string, leaf: (l: Layer, ind: string) => string[]): string {
+export function renderTree(nodes: LayerNode[], ind: string, leaf: (l: Layer, ind: string) => string[], attrs: (n: LayerNode) => string = () => ''): string {
   return nodes
     .filter((n) => n.visible)
     .map((n) => {
-      const inner = n.kind === 'folder' ? renderTree(n.children, ind + '  ', leaf) : leaf(n, ind + '  ').join('\n');
-      return `${ind}<g id="${escapeXml(n.id)}" data-name="${escapeXml(n.name)}">\n${inner}\n${ind}</g>`;
+      const inner = n.kind === 'folder' ? renderTree(n.children, ind + '  ', leaf, attrs) : leaf(n, ind + '  ').join('\n');
+      return `${ind}<g id="${escapeXml(n.id)}" data-name="${escapeXml(n.name)}"${attrs(n)}>\n${inner}\n${ind}</g>`;
     })
     .join('\n');
 }

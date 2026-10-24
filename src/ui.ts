@@ -4,8 +4,10 @@ import { ICONS } from './icons';
 import { askConfirm, askText, el, escapeHtml, showInfo } from './dialogs';
 import type { PickTool } from './tools/pick';
 import { buildLayersPanel } from './layers-panel';
+import { buildTimeline } from './timeline';
 import { allLayers, docToLineSvg, newDoc, newFolder, uid } from './doc';
-import { docToSvg } from './export';
+import { docToSvg, gameHandoff } from './export';
+import { animJson } from './anim';
 import { deleteFolder, deleteProject, listFolders, listProjects, loadProject, saveFolder, saveProject } from './storage';
 import { importSvg, type ImportResult } from './svg-import';
 
@@ -55,9 +57,13 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
   };
   const setBtn = iconButton(ICONS.settings, '設定', () => togglePanel(panel));
   const layersBtn = iconButton(ICONS.layers, 'レイヤー', () => togglePanel(layersPanel));
+  const animBtn = iconButton(ICONS.anim, 'アニメ', () => {
+    const on = !app.anim.active;
+    app.setAnimActive(on);
+  });
   const modeGroup = el('div', 'seg');
   modeGroup.append(penBtn, handBtn);
-  top.append(projBtn, title, el('span', 'spacer'), undoBtn, redoBtn, el('span', 'vsep'), modeGroup, el('span', 'vsep'), fitBtn, zoomLabel, el('span', 'vsep'), exportBtn, layersBtn, setBtn);
+  top.append(projBtn, title, el('span', 'spacer'), undoBtn, redoBtn, el('span', 'vsep'), modeGroup, el('span', 'vsep'), fitBtn, zoomLabel, el('span', 'vsep'), animBtn, exportBtn, layersBtn, setBtn);
 
   // ── 左ツールバー
   const toolbar = el('nav', 'toolbar');
@@ -70,6 +76,8 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
     toolBtns.set(t.id, b);
     toolbar.append(b);
   }
+  const poseBtn = iconButton(ICONS.anim, 'ポーズ', () => app.setTool('pose'), 'tool-btn');
+  toolbar.append(poseBtn);
 
   // ── キャンバス
   const stage = el('div', 'stage');
@@ -85,8 +93,14 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
   const layersPanel = el('aside', 'panel layers-panel');
   const syncLayers = buildLayersPanel(layersPanel, app);
 
+  // ── タイムライン（アニメーション中だけ表示）
+  const timeline = el('section', 'timeline');
+  const syncTimeline = buildTimeline(timeline, app);
+  const center = el('div', 'center');
+  center.append(stage, timeline);
+
   const main = el('div', 'main');
-  main.append(toolbar, stage, panel, layersPanel);
+  main.append(toolbar, center, panel, layersPanel);
   root.append(top, main);
 
   const fitView = () => {
@@ -102,7 +116,16 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
     penBtn.classList.toggle('active', app.mode === 'pen');
     handBtn.classList.toggle('active', app.mode === 'hand');
     zoomLabel.textContent = `${Math.round(app.view.zoom * 100)}%`;
-    for (const [id, b] of toolBtns) b.classList.toggle('active', id === app.toolId);
+    for (const [id, b] of toolBtns) {
+      b.classList.toggle('active', id === app.toolId);
+      // アニメーション中は作図ツールを使わない（形を変えるときはアニメを終える）
+      b.hidden = app.anim.active;
+    }
+    poseBtn.hidden = !app.anim.active;
+    poseBtn.classList.toggle('active', app.toolId === 'pose');
+    animBtn.classList.toggle('active', app.anim.active);
+    timeline.hidden = !app.anim.active;
+    if (app.anim.active) syncTimeline();
     options.replaceChildren(...app.tool.options());
     hint.textContent = app.mode === 'hand' ? 'ハンド：1本指でキャンバスを移動、2本指でズーム' : app.status || app.tool.hint();
     stage.classList.toggle('hand', app.mode === 'hand');
@@ -291,6 +314,22 @@ export function openExport(app: App) {
   act('線画SVGを保存（確認用）', () => download(`${safeName(app.doc.name)}-lines.svg`, docToLineSvg(app.doc), 'image/svg+xml'));
 
   box.append(head, seamRow, preview, status, actions);
+  if (app.doc.animations.length) {
+    const anim = el('div', 'modal-group');
+    const row = el('div', 'modal-actions');
+    const a2 = (labelText: string, fn: () => void) => { const b = el('button', 'opt-btn', labelText); b.addEventListener('click', fn); row.append(b); };
+    a2('ゲーム用にまとめてコピー', () => {
+      navigator.clipboard.writeText(gameHandoff(app.doc)).then(
+        () => (status.textContent = '説明・パーツSVG・アニメーションJSONをまとめてコピーしました。ゲーム側の Claude Code に貼り付けて「この説明に従って組み込んで」と頼めば使えます。'),
+        () => (status.textContent = 'コピーできませんでした。下のボタンでファイルに保存してください。'),
+      );
+    });
+    a2('アニメーションJSONを保存', () => download(`${safeName(app.doc.name)}.anim.json`, JSON.stringify(animJson(app.doc), null, 2), 'application/json'));
+    a2('説明書を保存', () => download(`${safeName(app.doc.name)}-README.md`, gameHandoff(app.doc), 'text/markdown'));
+    const clips = app.doc.animations.map((c) => `${c.name}（${c.duration}秒${c.loop ? '・ループ' : ''}）`).join('、');
+    anim.append(el('span', 'group-label', `アニメーション：${escapeHtml(clips)}`), row);
+    box.append(anim);
+  }
   document.body.append(overlay);
   update();
 }

@@ -11,6 +11,7 @@ export const ICONS = {
   circle: svg('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1" fill="currentColor"/>'),
   freehand: svg('<path d="M3 17c2-6 5-9 7-7s-1 6 2 6 4-9 9-10"/><circle cx="3" cy="17" r="1.2" fill="currentColor"/>'),
   fill: svg('<path d="M5 11l7-7 7 7-7 7z"/><path d="M19 14c1 1.6 1.5 2.6 1.5 3.3a1.5 1.5 0 01-3 0c0-.7.5-1.7 1.5-3.3z" fill="currentColor"/><path d="M5 11h14"/>'),
+  anim: svg('<circle cx="12" cy="5" r="2.2"/><path d="M12 7.5v6M12 9.5l-4.5 3M12 9.5l4 -3.5M12 13.5l-3.5 6M12 13.5l3.5 6"/><path d="M18.5 15.5a3 3 0 012 2.5" opacity=".6"/>'),
   export: svg('<path d="M12 4v11M7 10l5 5 5-5"/><path d="M4 18v2h16v-2"/>'),
   pen: svg('<path d="M4 20l1-5L16 4l4 4L9 19z"/><path d="M14 6l4 4"/>'),
   hand: svg('<path d="M8 13V6a1.5 1.5 0 013 0v5M11 11V4.5a1.5 1.5 0 013 0V11M14 11V6a1.5 1.5 0 013 0v7c0 4-2.5 7-6 7s-5-2-6.5-4.5L3 12a1.5 1.5 0 012.5-1.5L8 13"/>'),

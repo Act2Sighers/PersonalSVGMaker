@@ -53,6 +53,8 @@ export interface Layer {
   locked: boolean;
   shapes: Shape[];
   fills: Fill[];
+  /** アニメーションで回転・拡大縮小の中心にする点（なければ中身の中央） */
+  pivot?: Vec;
 }
 
 export interface Folder {
@@ -64,6 +66,7 @@ export interface Folder {
   /** レイヤー一覧で中身を開いているか */
   open: boolean;
   children: LayerNode[];
+  pivot?: Vec;
 }
 
 export type LayerNode = Layer | Folder;
@@ -90,10 +93,41 @@ export interface Doc {
   layers: LayerNode[];
   /** 描画先のレイヤー（またはレイヤー一覧で選んでいるフォルダー） */
   activeId: string;
+  /** アニメーションのクリップ */
+  animations: Clip[];
   /** 作品一覧でのフォルダー（なければ一番上） */
   folderId?: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** アニメーションで動かせる値。回転は度、x・y は移動量、scaleX・scaleY は倍率、opacity は 0〜1 */
+export type AnimProp = 'rotate' | 'x' | 'y' | 'scaleX' | 'scaleY' | 'opacity';
+
+/** 次のキーまでのつなぎ方：滑らか（加速して減速）・等速・瞬時（次のキーで切り替わる） */
+export type Ease = 'smooth' | 'linear' | 'step';
+
+export interface Keyframe {
+  /** 秒 */
+  t: number;
+  v: number;
+  ease: Ease;
+}
+
+export interface Track {
+  /** 動かすパーツ（レイヤーかフォルダー）の ID */
+  node: string;
+  prop: AnimProp;
+  keys: Keyframe[];
+}
+
+export interface Clip {
+  id: string;
+  name: string;
+  /** 秒 */
+  duration: number;
+  loop: boolean;
+  tracks: Track[];
 }
 
 /** 作品一覧のフォルダー（作品の中のレイヤーフォルダーとは別） */

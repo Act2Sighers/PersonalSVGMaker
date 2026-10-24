@@ -1,6 +1,7 @@
 import type { Doc, Paint } from './types';
 import { fillFace } from './fills';
 import { renderTree } from './doc';
+import { animJson, HANDOFF_GUIDE, pivotOf } from './anim';
 import { faceToPathData } from './regions';
 
 const n3 = (n: number) => String(+n.toFixed(3));
@@ -31,7 +32,28 @@ export function docToSvg(doc: Doc, opts: ExportOptions): string {
       const seam = opts.seamFix ? ` stroke="${paint}" stroke-width="0.5" stroke-linejoin="round"` : '';
       return [`${ind}<path id="${f.id}" d="${faceToPathData(face)}" fill="${paint}" fill-rule="evenodd"${seam}/>`];
     }),
+    // アニメーションがある作品では、各パーツの回転・拡大縮小の中心も書いておく
+    (n) => {
+      if (!doc.animations.length) return '';
+      const p = pivotOf(n);
+      return ` data-pivot-x="${n3(p.x)}" data-pivot-y="${n3(p.y)}"`;
+    },
   );
   const defsBlock = defs.length ? `  <defs>\n${defs.join('\n')}\n  </defs>\n` : '';
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${doc.width} ${doc.height}" width="${doc.width}" height="${doc.height}">\n${defsBlock}${body}\n</svg>\n`;
+}
+
+/** ゲーム側の Claude Code に渡すための、説明・パーツ SVG・アニメーション JSON をまとめた文章 */
+export function gameHandoff(doc: Doc): string {
+  return `${HANDOFF_GUIDE}
+## パーツ SVG（${doc.name}）
+\`\`\`svg
+${docToSvg(doc, { seamFix: true }).trim()}
+\`\`\`
+
+## アニメーション JSON
+\`\`\`json
+${JSON.stringify(animJson(doc), null, 2)}
+\`\`\`
+`;
 }
