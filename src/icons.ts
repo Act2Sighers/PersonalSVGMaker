@@ -4,6 +4,8 @@ const svg = (body: string) =>
 export const ICONS = {
   select: svg('<path d="M5 3l13 8-6 1.5L9 19z"/>'),
   move: svg('<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>'),
+  transform: svg('<rect x="5" y="5" width="14" height="14" stroke-dasharray="2.5 2"/><path d="M14 3.5a8.5 8.5 0 016.5 6.5M20.5 10l.3-3.2M20.5 10l-3-1"/><rect x="3" y="3" width="4" height="4" fill="currentColor"/><rect x="17" y="17" width="4" height="4" fill="currentColor"/>'),
+  layers: svg('<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>'),
   line: svg('<path d="M4 19L20 5"/><rect x="2.5" y="17.5" width="3" height="3" fill="currentColor"/><rect x="18.5" y="3.5" width="3" height="3" fill="currentColor"/>'),
   bezier: svg('<path d="M4 19C6 8 18 16 20 5"/><path d="M4 19L9 9M20 5l-4 9" stroke-dasharray="2 2"/><circle cx="9" cy="9" r="1.5"/><circle cx="16" cy="14" r="1.5"/>'),
   circle: svg('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1" fill="currentColor"/>'),

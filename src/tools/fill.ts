@@ -48,11 +48,12 @@ export class FillTool implements Tool {
   }
   deactivate() { this.reset(); }
 
-  private layer() {
-    return this.app.activeLayer();
+  private faces(): Face[] {
+    const l = this.app.peekLayer();
+    return l ? layerFaces(l) : [];
   }
   private faceAtScreen(s: Vec): Face | null {
-    return faceAt(layerFaces(this.layer()), this.app.view.toWorld(s));
+    return faceAt(this.faces(), this.app.view.toWorld(s));
   }
   private choosingEnds() {
     return this.mode === 'linear' && this.target !== null;
@@ -70,6 +71,12 @@ export class FillTool implements Tool {
   }
   up(s: Vec) {
     const app = this.app;
+    const layer = app.drawLayer();
+    if (!layer) {
+      this.reset();
+      app.refreshUI();
+      return;
+    }
     if (this.choosingEnds()) {
       const p = this.picker.end();
       if (!p) return;
@@ -78,7 +85,7 @@ export class FillTool implements Tool {
         const target = this.target!, start = this.start;
         this.reset();
         const paint: Paint = { type: 'linear', color: this.color, color2: this.color2, x1: start.x, y1: start.y, x2: p.x, y2: p.y };
-        app.mutate(() => applyFill(this.layer(), target, paint));
+        app.mutate(() => applyFill(layer, target, paint));
         this.remember(this.color);
         this.remember(this.color2);
       }
@@ -87,19 +94,19 @@ export class FillTool implements Tool {
     }
     this.hover = null;
     const w = app.view.toWorld(s);
-    const face = faceAt(layerFaces(this.layer()), w);
+    const face = faceAt(layerFaces(layer), w);
     if (!face) {
       app.setStatus('ここは線で閉じた範囲ではありません');
       app.requestRender();
       return;
     }
     if (this.mode === 'solid') {
-      app.mutate(() => applyFill(this.layer(), w, { type: 'solid', color: this.color }));
+      app.mutate(() => applyFill(layer, w, { type: 'solid', color: this.color }));
       this.remember(this.color);
     } else if (this.mode === 'erase') {
-      app.mutate(() => applyFill(this.layer(), w, null));
+      app.mutate(() => applyFill(layer, w, null));
     } else if (this.mode === 'pick') {
-      const f = this.layer().fills.find((x) => fillFace(this.layer(), x) === face);
+      const f = layer.fills.find((x) => fillFace(layer, x) === face);
       if (!f) app.setStatus('この範囲はまだ塗られていません');
       else {
         this.color = f.paint.color;
@@ -175,7 +182,7 @@ export class FillTool implements Tool {
         ctx.setLineDash([]);
       });
     if (this.target) {
-      const face = faceAt(layerFaces(this.layer()), this.target);
+      const face = faceAt(this.faces(), this.target);
       if (face) {
         const prev = this.picker.preview;
         if (this.start && prev)

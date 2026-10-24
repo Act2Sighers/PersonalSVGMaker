@@ -1,5 +1,6 @@
 import type { Doc, Fill, Layer, Paint, Vec } from './types';
-import { uid } from './doc';
+import { allLayers, uid } from './doc';
+import { applyAffine, translateM, type Affine } from './geom';
 import { computeFaces, faceAt, pointInFace, type Face } from './regions';
 
 /** 境界の線がこの割合以上一致していれば「同じ範囲が形を変えたもの」とみなす */
@@ -14,10 +15,20 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   return union ? inter / union : 0;
 }
 
-function movePaint(p: Paint, d: Vec): Paint {
-  if (p.type !== 'linear' || (!d.x && !d.y)) return p;
-  return { ...p, x1: p.x1 + d.x, y1: p.y1 + d.y, x2: p.x2 + d.x, y2: p.y2 + d.y };
+export function transformPaint(p: Paint, m: Affine): Paint {
+  if (p.type !== 'linear') return p;
+  const a = applyAffine(m, { x: p.x1, y: p.y1 }), b = applyAffine(m, { x: p.x2, y: p.y2 });
+  return { ...p, x1: a.x, y1: a.y, x2: b.x, y2: b.y };
 }
+
+/** 図形の変形が分かっているときの手がかり（グラデーションを正確に動かすため） */
+export interface TransformHint {
+  m: Affine;
+  /** 全体が変形された図形 */
+  shapes: Set<string>;
+}
+
+const shapeOfSrc = (src: string) => src.slice(0, src.lastIndexOf(':'));
 
 export function layerFaces(l: Layer): Face[] {
   return computeFaces(l.shapes);
@@ -50,9 +61,10 @@ function samplePoints(f: Face): Vec[] {
  *    （塗られていなかった部分が多ければ塗らない）
  *  - 線が閉じなくなった範囲は存在しないので、その塗りは消える
  */
-export function reconcileFills(before: Doc, after: Doc) {
-  for (const layer of after.layers) {
-    const old = before.layers.find((l) => l.id === layer.id);
+export function reconcileFills(before: Doc, after: Doc, hint?: TransformHint) {
+  const oldLayers = allLayers(before);
+  for (const layer of allLayers(after)) {
+    const old = oldLayers.find((l) => l.id === layer.id);
     if (!old || !old.fills.length) continue;
     if (JSON.stringify(old.shapes) === JSON.stringify(layer.shapes)) continue;
 
@@ -81,7 +93,10 @@ export function reconcileFills(before: Doc, after: Doc) {
       // 移動・変形：位置で見つかる元の範囲が無関係なら、線の一致を信じる
       if (bySig && bySig !== here && (!here || jaccard(here.sig, nf.sig) < SHARED_SOME)) {
         const f = fillOf.get(bySig);
-        if (f) add(f, nf, movePaint(f.paint, { x: nf.centroid.x - bySig.centroid.x, y: nf.centroid.y - bySig.centroid.y }));
+        if (!f) continue;
+        const whole = hint && [...bySig.sig].every((s) => hint.shapes.has(shapeOfSrc(s)));
+        const m = whole ? hint.m : translateM({ x: nf.centroid.x - bySig.centroid.x, y: nf.centroid.y - bySig.centroid.y });
+        add(f, nf, transformPaint(f.paint, m));
         continue;
       }
       // 位置で決める：内側の点がどの塗りの上にあったかの多数決

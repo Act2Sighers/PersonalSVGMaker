@@ -1,14 +1,19 @@
-import type { Doc, Fill, Layer, PathNode, PathShape, PointRef, Shape, Vec } from './types';
-import { add, sub, type Prim } from './geom';
+import type { Doc, Fill, Folder, Layer, LayerNode, PathNode, PathShape, PointRef, Shape, Vec } from './types';
+import { applyAffine, affineScale, reflectM, sub, translateM, type Affine, type Prim } from './geom';
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
 export function newLayer(name: string): Layer {
-  return { id: uid(), name, visible: true, locked: false, shapes: [], fills: [] };
+  return { kind: 'layer', id: uid(), name, visible: true, locked: false, shapes: [], fills: [] };
+}
+
+export function newFolder(name: string): Folder {
+  return { kind: 'folder', id: uid(), name, visible: true, locked: false, open: true, children: [] };
 }
 
 export function newDoc(name = '無題', width = 512, height = 512): Doc {
   const now = Date.now();
+  const layer = newLayer('レイヤー 1');
   return {
     version: 1,
     id: uid(),
@@ -16,7 +21,9 @@ export function newDoc(name = '無題', width = 512, height = 512): Doc {
     width,
     height,
     grid: { originX: 0, originY: 0, spacing: 16, majorEvery: 4, visible: true },
-    layers: [newLayer('レイヤー 1')],
+    mirror: { axis: 'none', x: width / 2, y: height / 2 },
+    layers: [layer],
+    activeId: layer.id,
     createdAt: now,
     updatedAt: now,
   };
@@ -26,22 +33,78 @@ export const cloneDoc = (d: Doc): Doc => structuredClone(d);
 
 /** 古い形式で保存された作品を今の形式に揃える */
 export function normalizeDoc(d: Doc): Doc {
-  for (const l of d.layers) {
-    // 以前の「保留中の塗り」は廃止したので取り除く
-    const fills = (l.fills ?? []) as (Fill & { pending?: boolean; sig?: unknown })[];
-    l.fills = fills.filter((f) => !f.pending).map(({ id, seed, paint }) => ({ id, seed, paint }));
-  }
+  const fix = (nodes: LayerNode[]) => {
+    for (const n of nodes as (LayerNode & { kind?: string })[]) {
+      if (n.kind === 'folder') { fix((n as Folder).children); continue; }
+      const l = n as Layer;
+      l.kind = 'layer';
+      // 以前の「保留中の塗り」は廃止したので取り除く
+      const fills = (l.fills ?? []) as (Fill & { pending?: boolean; sig?: unknown })[];
+      l.fills = fills.filter((f) => !f.pending).map(({ id, seed, paint }) => ({ id, seed, paint }));
+    }
+  };
+  fix(d.layers);
+  d.mirror ??= { axis: 'none', x: d.width / 2, y: d.height / 2 };
+  if (!d.activeId || !findNode(d, d.activeId)) d.activeId = allLayers(d).at(-1)?.id ?? '';
   return d;
 }
 
-export function allShapes(doc: Doc, visibleOnly = true): Shape[] {
+// ── レイヤーの木
+
+export interface LayerEntry {
+  layer: Layer;
+  /** フォルダーの表示・ロックも反映した状態 */
+  visible: boolean;
+  locked: boolean;
+  depth: number;
+}
+
+/** 描画順（下から上）にレイヤーを並べる */
+export function layerEntries(doc: Doc): LayerEntry[] {
+  const out: LayerEntry[] = [];
+  const walk = (nodes: LayerNode[], visible: boolean, locked: boolean, depth: number) => {
+    for (const n of nodes) {
+      const v = visible && n.visible, k = locked || n.locked;
+      if (n.kind === 'folder') walk(n.children, v, k, depth + 1);
+      else out.push({ layer: n, visible: v, locked: k, depth });
+    }
+  };
+  walk(doc.layers, true, false, 0);
+  return out;
+}
+
+export function allLayers(doc: Doc): Layer[] {
+  return layerEntries(doc).map((e) => e.layer);
+}
+
+export function findNode(doc: Doc, id: string): { node: LayerNode; siblings: LayerNode[]; index: number; parent: Folder | null } | null {
+  const walk = (nodes: LayerNode[], parent: Folder | null): ReturnType<typeof findNode> => {
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (n.id === id) return { node: n, siblings: nodes, index: i, parent };
+      if (n.kind === 'folder') {
+        const r = walk(n.children, n);
+        if (r) return r;
+      }
+    }
+    return null;
+  };
+  return walk(doc.layers, null);
+}
+
+export function layerOfShape(doc: Doc, shapeId: string): Layer | undefined {
+  return allLayers(doc).find((l) => l.shapes.some((s) => s.id === shapeId));
+}
+
+/** 表示中のレイヤーの図形。editable なら、ロックされたレイヤーも除く */
+export function allShapes(doc: Doc, visibleOnly = true, editable = false): Shape[] {
   const out: Shape[] = [];
-  for (const l of doc.layers) if (!visibleOnly || l.visible) out.push(...l.shapes);
+  for (const e of layerEntries(doc)) if ((!visibleOnly || e.visible) && (!editable || !e.locked)) out.push(...e.layer.shapes);
   return out;
 }
 
 export function findShape(doc: Doc, id: string): Shape | undefined {
-  for (const l of doc.layers) for (const s of l.shapes) if (s.id === id) return s;
+  for (const l of allLayers(doc)) for (const s of l.shapes) if (s.id === id) return s;
   return undefined;
 }
 
@@ -99,8 +162,8 @@ export function shapePrims(s: Shape): Prim[] {
   return pathPrims(s);
 }
 
-/** 選択された点を delta だけ動かす（doc を直接書き換える） */
-export function translatePoints(doc: Doc, sel: Set<PointRef>, delta: Vec) {
+/** 選択された点を変換する（doc を直接書き換える）。頂点を選んでいれば、そのハンドルも一緒に動く。 */
+export function transformPoints(doc: Doc, sel: Set<PointRef>, m: Affine) {
   const byShape = new Map<string, Set<string>>();
   for (const r of sel) {
     const [id, key] = parseRef(r);
@@ -111,29 +174,63 @@ export function translatePoints(doc: Doc, sel: Set<PointRef>, delta: Vec) {
     const s = findShape(doc, id);
     if (!s) continue;
     if (s.type === 'circle') {
-      if (keys.has('c')) {
-        s.cx += delta.x;
-        s.cy += delta.y;
-      }
+      if (keys.has('c')) transformShape(s, m);
       continue;
     }
     s.nodes.forEach((n, i) => {
-      if (keys.has(`n${i}`)) {
-        n.x += delta.x;
-        n.y += delta.y;
-        if (n.hin) n.hin = add(n.hin, delta);
-        if (n.hout) n.hout = add(n.hout, delta);
-      } else {
-        if (keys.has(`i${i}`) && n.hin) n.hin = add(n.hin, delta);
-        if (keys.has(`o${i}`) && n.hout) n.hout = add(n.hout, delta);
+      if (keys.has(`n${i}`)) transformNode(n, m);
+      else {
+        if (keys.has(`i${i}`) && n.hin) n.hin = applyAffine(m, n.hin);
+        if (keys.has(`o${i}`) && n.hout) n.hout = applyAffine(m, n.hout);
       }
     });
   }
 }
 
+export function translatePoints(doc: Doc, sel: Set<PointRef>, delta: Vec) {
+  transformPoints(doc, sel, translateM(delta));
+}
+
+function transformNode(n: PathNode, m: Affine) {
+  const p = applyAffine(m, n);
+  n.x = p.x;
+  n.y = p.y;
+  if (n.hin) n.hin = applyAffine(m, n.hin);
+  if (n.hout) n.hout = applyAffine(m, n.hout);
+}
+
+/** 図形全体を変換する */
+export function transformShape(s: Shape, m: Affine) {
+  if (s.type === 'circle') {
+    const c = applyAffine(m, { x: s.cx, y: s.cy });
+    s.cx = c.x;
+    s.cy = c.y;
+    s.r *= affineScale(m);
+  } else s.nodes.forEach((n) => transformNode(n, m));
+}
+
+/** ミラー描画の折り返し（オフなら null） */
+export function mirrorMatrix(doc: Doc): Affine | null {
+  const m = doc.mirror;
+  if (m.axis === 'vertical') return reflectM({ x: m.x, y: 0 }, { x: m.x, y: 1 });
+  if (m.axis === 'horizontal') return reflectM({ x: 0, y: m.y }, { x: 1, y: m.y });
+  return null;
+}
+
+/** 図形を新しい ID で複製する（グループも新しい ID に付け替える） */
+export function cloneShapes(shapes: Shape[]): Shape[] {
+  const groupMap = new Map<string, string>();
+  return shapes.map((s) => {
+    const c = structuredClone(s);
+    c.id = uid();
+    if (c.groups) c.groups = c.groups.map((g) => groupMap.get(g) ?? (groupMap.set(g, uid()), groupMap.get(g)!));
+    return c;
+  });
+}
+
 /** 選択点を削除。パスは頂点を取り除き、2点未満になれば図形ごと消す。円は中心が選ばれていれば消す。 */
 export function deletePoints(doc: Doc, sel: Set<PointRef>) {
-  for (const l of doc.layers) {
+  for (const l of allLayers(doc)) {
     l.shapes = l.shapes.filter((s) => {
       if (s.type === 'circle') return !anchorKeys(s).some((k) => sel.has(ref(s.id, k)));
       const keep = s.nodes.filter((_, i) => !sel.has(ref(s.id, `n${i}`)));
@@ -165,12 +262,13 @@ export function makeCorner(doc: Doc, sel: Set<PointRef>) {
   }
 }
 
-/** 存在しない参照を除く */
+/** 存在しない参照と、非表示・ロック中のレイヤーの点を除く */
 export function pruneSelection(doc: Doc, sel: Set<PointRef>): Set<PointRef> {
   const out = new Set<PointRef>();
+  const editable = new Map(allShapes(doc, true, true).map((s) => [s.id, s]));
   for (const r of sel) {
     const [id, key] = parseRef(r);
-    const s = findShape(doc, id);
+    const s = editable.get(id);
     if (s && getPoint(s, key)) out.add(r);
   }
   return out;
@@ -204,16 +302,19 @@ export function shapeToPathData(s: Shape): string {
 }
 
 export function docToLineSvg(doc: Doc): string {
-  const paths = doc.layers
-    .filter((l) => l.visible)
-    .map(
-      (l) =>
-        `  <g id="${l.id}" data-name="${escapeXml(l.name)}">\n` +
-        l.shapes.map((s) => `    <path d="${shapeToPathData(s)}"/>`).join('\n') +
-        `\n  </g>`,
-    )
+  const body = renderTree(doc.layers, '  ', (l, ind) => l.shapes.map((s) => `${ind}<path d="${shapeToPathData(s)}"/>`));
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${doc.width} ${doc.height}" width="${doc.width}" height="${doc.height}" fill="none" stroke="#000" stroke-width="1">\n${body}\n</svg>\n`;
+}
+
+/** レイヤーの木を、フォルダーとレイヤーごとの <g> に書き出す（非表示のものは出さない） */
+export function renderTree(nodes: LayerNode[], ind: string, leaf: (l: Layer, ind: string) => string[]): string {
+  return nodes
+    .filter((n) => n.visible)
+    .map((n) => {
+      const inner = n.kind === 'folder' ? renderTree(n.children, ind + '  ', leaf) : leaf(n, ind + '  ').join('\n');
+      return `${ind}<g id="${escapeXml(n.id)}" data-name="${escapeXml(n.name)}">\n${inner}\n${ind}</g>`;
+    })
     .join('\n');
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${doc.width} ${doc.height}" width="${doc.width}" height="${doc.height}" fill="none" stroke="#000" stroke-width="1">\n${paths}\n</svg>\n`;
 }
 
 const escapeXml = (s: string) => s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);

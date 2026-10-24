@@ -3,7 +3,7 @@ import type { View } from './view';
 import type { Layer, Paint, Shape, Vec } from './types';
 import { layerFaces } from './fills';
 import { faceAt, traceFace, type Face } from './regions';
-import { allShapes, anchorKeys, getPoint, ref, shapePrims } from './doc';
+import { allShapes, anchorKeys, layerEntries, getPoint, ref, shapePrims } from './doc';
 import type { Prim } from './geom';
 import type { SnapResult } from './snap';
 
@@ -23,6 +23,7 @@ export const COLORS = {
   ghost: 'rgba(47,107,255,0.75)',
   snap: '#ff3d7f',
   guide: 'rgba(255,61,127,0.65)',
+  mirror: '#16a89a',
 };
 
 /** ワールド座標で描くための変換を設定 */
@@ -201,7 +202,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, app: App, view: View, o
   ctx.lineWidth = 1 / view.zoom;
   ctx.strokeRect(0, 0, app.doc.width, app.doc.height);
 
-  for (const l of app.doc.layers) if (l.visible) drawFills(ctx, l);
+  for (const e of layerEntries(app.doc)) if (e.visible) drawFills(ctx, e.layer);
 
   const shapes = allShapes(app.doc);
   const sel = app.sel;
@@ -211,9 +212,10 @@ export function drawScene(ctx: CanvasRenderingContext2D, app: App, view: View, o
 
   screenTransform(ctx, dpr);
   drawOrigin(ctx, app, view);
-  const showPoints = app.toolId === 'select' || app.toolId === 'move';
+  drawMirrorAxis(ctx, app, view, w, h);
+  const showPoints = app.toolId === 'select' || app.toolId === 'move' || app.toolId === 'transform';
   if (showPoints) {
-    for (const s of shapes) {
+    for (const s of allShapes(app.doc, true, true)) {
       for (const k of anchorKeys(s)) {
         const p = getPoint(s, k)!;
         const isSel = sel.has(ref(s.id, k));
@@ -239,4 +241,31 @@ export function drawScene(ctx: CanvasRenderingContext2D, app: App, view: View, o
     }
   }
   app.tool.overlay(ctx, view);
+
+  // ミラー描画：作図中の線を軸の反対側にも薄く表示する
+  const mirror = app.doc.mirror;
+  if (mirror.axis !== 'none' && (app.toolId === 'line' || app.toolId === 'bezier' || app.toolId === 'circle')) {
+    const o = view.toScreen({ x: mirror.x, y: mirror.y });
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+    if (mirror.axis === 'vertical') ctx.setTransform(-dpr, 0, 0, dpr, 2 * o.x * dpr, 0);
+    else ctx.setTransform(dpr, 0, 0, -dpr, 0, 2 * o.y * dpr);
+    app.tool.overlay(ctx, view);
+    ctx.restore();
+  }
+}
+
+function drawMirrorAxis(ctx: CanvasRenderingContext2D, app: App, view: View, w: number, h: number) {
+  const m = app.doc.mirror;
+  if (m.axis === 'none') return;
+  const o = view.toScreen({ x: m.x, y: m.y });
+  ctx.save();
+  ctx.strokeStyle = COLORS.mirror;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([10, 4, 2, 4]);
+  ctx.beginPath();
+  if (m.axis === 'vertical') { ctx.moveTo(o.x, 0); ctx.lineTo(o.x, h); }
+  else { ctx.moveTo(0, o.y); ctx.lineTo(w, o.y); }
+  ctx.stroke();
+  ctx.restore();
 }

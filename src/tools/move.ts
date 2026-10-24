@@ -1,14 +1,21 @@
 import type { App, Tool } from '../app';
 import type { Doc, Shape, Vec } from '../types';
 import type { View } from '../view';
-import { allShapes, parseRef, translatePoints } from '../doc';
-import { sub } from '../geom';
+import { allShapes, anchorKeys, getPoint, parseRef, shapePrims, transformPoints, transformShape } from '../doc';
+import { sub, translateM } from '../geom';
 import { COLORS, inWorld, strokeShapes } from '../render';
-import { button, PointPicker } from './common';
+import { copyData, placeClip, selectedShapeIds, transformSelection, type ClipData } from '../clipboard';
+import { button, PointPicker, separator } from './common';
 
-/** CAD式の移動：基準点 → 移動先 の順にタップする。一部の点だけを選んでいれば、その点だけが動く（ストレッチ）。 */
+/**
+ * CAD式の移動：基準点 → 移動先 の順にタップする。一部の点だけを選んでいれば、その点だけが動く（ストレッチ）。
+ * 「コピーして移動」では元を残して複製を置く。貼り付けもこのツールで置き場所を決める。
+ */
 export class MoveTool implements Tool {
   id = 'move' as const;
+  copy = false;
+  /** 貼り付け中なら、置く図形 */
+  private paste: ClipData | null = null;
   private base: Vec | null = null;
   private picker: PointPicker;
 
@@ -16,16 +23,35 @@ export class MoveTool implements Tool {
     this.picker = new PointPicker(app);
   }
 
-  activate() { this.reset(); }
+  activate() { this.base = null; this.picker.cancel(); }
+  deactivate() { this.reset(); }
   reset() {
     this.base = null;
+    this.paste = null;
     this.picker.cancel();
   }
 
+  /** 貼り付けを始める（基準点 → 置く位置 を指定させる） */
+  startPaste(clip: ClipData) {
+    this.app.setTool('move');
+    this.paste = clip;
+    this.base = null;
+    this.app.refreshUI();
+  }
+
+  private ready() {
+    return !!this.paste || this.app.sel.size > 0;
+  }
+
   down(s: Vec) {
-    if (!this.app.sel.size) return;
-    // 移動先は、動かす図形自身の端点や交点（移動前の位置）にも吸着する
-    this.picker.begin(s, { ref: this.base });
+    if (!this.ready()) return;
+    // 貼り付けの基準点は、これから置く図形の点にも吸着させる
+    const extra = this.paste && !this.base ? this.paste.shapes : [];
+    this.picker.begin(s, {
+      ref: this.base,
+      extraPrims: extra.flatMap(shapePrims),
+      extraPoints: extra.flatMap((sh) => anchorKeys(sh).map((k) => getPoint(sh, k)!)),
+    });
   }
   move(s: Vec) {
     this.picker.update(s);
@@ -36,11 +62,17 @@ export class MoveTool implements Tool {
     if (!p) return;
     if (!this.base) {
       this.base = p;
-    } else {
-      const delta = sub(p, this.base);
-      this.base = null;
-      if (delta.x || delta.y) this.app.mutate((d) => translatePoints(d, this.app.sel, delta));
+      this.app.refreshUI();
+      return;
     }
+    const m = translateM(sub(p, this.base));
+    this.base = null;
+    if (this.paste) {
+      if (placeClip(this.app, this.paste, m)) this.paste = null;
+    } else if (this.copy) {
+      const clip = copyData(this.app.doc, selectedShapeIds(this.app.sel));
+      if (clip) placeClip(this.app, clip, m);
+    } else if (m.e || m.f) transformSelection(this.app, m);
     this.app.refreshUI();
   }
   cancelGesture() {
@@ -49,29 +81,42 @@ export class MoveTool implements Tool {
   }
 
   hint() {
+    if (this.paste) return this.base ? '貼り付ける位置をタップ' : '貼り付ける図形の基準点をタップ（元の図形の位置で指定します）';
     if (!this.app.sel.size) return '先に「選択」ツールで動かす点や図形を選んでください';
     if (!this.base) return '基準点をタップ（指を離した位置で確定）';
-    return '移動先をタップ';
+    return this.copy ? 'コピーを置く位置をタップ' : '移動先をタップ';
   }
 
   options() {
+    const app = this.app;
+    if (this.paste)
+      return [
+        button('基準点からやり直す', () => { this.base = null; app.refreshUI(); }, { disabled: !this.base }),
+        button('貼り付けをやめる', () => { this.reset(); app.setTool('select'); }),
+      ];
     return [
-      button('基準点からやり直す', () => { this.reset(); this.app.refreshUI(); }, { disabled: !this.base }),
-      button('選択に戻る', () => this.app.setTool('select')),
+      button('コピーして移動', () => { this.copy = !this.copy; app.refreshUI(); }, { active: this.copy, title: 'オンにすると、元を残して複製を置きます' }),
+      separator(),
+      button('基準点からやり直す', () => { this.base = null; app.refreshUI(); }, { disabled: !this.base }),
+      button('選択に戻る', () => app.setTool('select')),
     ];
   }
 
   /** 移動後の形をプレビュー */
   private ghost(delta: Vec): Shape[] {
+    const m = translateM(delta);
+    if (this.paste) return this.paste.shapes.map((s) => { const c = structuredClone(s); transformShape(c, m); return c; });
     const ids = new Set([...this.app.sel].map((r) => parseRef(r)[0]));
     const shapes = allShapes(this.app.doc).filter((s) => ids.has(s.id)).map((s) => structuredClone(s));
-    const tmp = { layers: [{ shapes }] } as unknown as Doc;
-    translatePoints(tmp, this.app.sel, delta);
+    if (this.copy) { shapes.forEach((s) => transformShape(s, m)); return shapes; }
+    const tmp = { layers: [{ kind: 'layer', visible: true, shapes }] } as unknown as Doc;
+    transformPoints(tmp, this.app.sel, m);
     return shapes;
   }
 
   overlay(ctx: CanvasRenderingContext2D, view: View) {
     const prev = this.picker.preview;
+    if (this.paste && !this.base) inWorld(ctx, view, () => strokeShapes(ctx, view, this.paste!.shapes, COLORS.ghost, 1.5));
     if (this.base) {
       const b = view.toScreen(this.base);
       if (prev) {

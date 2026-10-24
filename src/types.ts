@@ -11,14 +11,19 @@ export interface PathNode {
   hout: Vec | null;
 }
 
-export interface PathShape {
+/** グループ。外側のグループから順に ID を並べる（入れ子にできる） */
+interface Groupable {
+  groups?: string[];
+}
+
+export interface PathShape extends Groupable {
   id: string;
   type: 'path';
   closed: boolean;
   nodes: PathNode[];
 }
 
-export interface CircleShape {
+export interface CircleShape extends Groupable {
   id: string;
   type: 'circle';
   cx: number;
@@ -41,6 +46,7 @@ export interface Fill {
 }
 
 export interface Layer {
+  kind: 'layer';
   id: string;
   name: string;
   visible: boolean;
@@ -48,6 +54,19 @@ export interface Layer {
   shapes: Shape[];
   fills: Fill[];
 }
+
+export interface Folder {
+  kind: 'folder';
+  id: string;
+  name: string;
+  visible: boolean;
+  locked: boolean;
+  /** レイヤー一覧で中身を開いているか */
+  open: boolean;
+  children: LayerNode[];
+}
+
+export type LayerNode = Layer | Folder;
 
 export interface GridSettings {
   originX: number;
@@ -65,12 +84,19 @@ export interface Doc {
   width: number;
   height: number;
   grid: GridSettings;
-  layers: Layer[];
+  /** ミラー描画。vertical は x の位置の縦線、horizontal は y の位置の横線で折り返す */
+  mirror: { axis: MirrorAxis; x: number; y: number };
+  /** レイヤーとフォルダーの木。配列の先頭が一番下に描かれる。 */
+  layers: LayerNode[];
+  /** 描画先のレイヤー（またはレイヤー一覧で選んでいるフォルダー） */
+  activeId: string;
   createdAt: number;
   updatedAt: number;
 }
 
 /** アプリ全体の設定（作品ごとではない） */
+export type MirrorAxis = 'none' | 'vertical' | 'horizontal';
+
 export interface Settings {
   snapGrid: boolean;
   snapPoints: boolean;

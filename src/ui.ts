@@ -1,25 +1,22 @@
 import type { App, ToolId } from './app';
-import type { Doc, Settings } from './types';
+import type { Doc, MirrorAxis, Settings } from './types';
 import { ICONS } from './icons';
-import { docToLineSvg, newDoc, uid } from './doc';
+import { askConfirm, askText, el, escapeHtml } from './dialogs';
+import type { PickTool } from './tools/pick';
+import { buildLayersPanel } from './layers-panel';
+import { allLayers, docToLineSvg, newDoc, uid } from './doc';
 import { docToSvg } from './export';
 import { deleteProject, listProjects, loadProject } from './storage';
 
 const TOOLS: { id: ToolId; label: string }[] = [
   { id: 'select', label: '選択' },
   { id: 'move', label: '移動' },
+  { id: 'transform', label: '変形' },
   { id: 'line', label: '直線' },
   { id: 'bezier', label: '曲線' },
   { id: 'circle', label: '円' },
   { id: 'fill', label: '塗り' },
 ];
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = ''): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (html) e.innerHTML = html;
-  return e;
-}
 
 function iconButton(icon: string, label: string, onClick: () => void, cls = 'icon-btn') {
   const b = el('button', cls, `${icon}<span>${label}</span>`);
@@ -47,10 +44,18 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
   const fitBtn = iconButton(ICONS.fit, '全体表示', () => fitView());
   const exportBtn = iconButton(ICONS.export, '書き出し', () => openExport(app));
   const zoomLabel = el('span', 'zoom-label');
-  const setBtn = iconButton(ICONS.settings, '設定', () => panel.classList.toggle('open'));
+  const togglePanel = (p: HTMLElement) => {
+    const open = !p.classList.contains('open');
+    panel.classList.remove('open');
+    layersPanel.classList.remove('open');
+    p.classList.toggle('open', open);
+    app.refreshUI();
+  };
+  const setBtn = iconButton(ICONS.settings, '設定', () => togglePanel(panel));
+  const layersBtn = iconButton(ICONS.layers, 'レイヤー', () => togglePanel(layersPanel));
   const modeGroup = el('div', 'seg');
   modeGroup.append(penBtn, handBtn);
-  top.append(projBtn, title, el('span', 'spacer'), undoBtn, redoBtn, el('span', 'vsep'), modeGroup, el('span', 'vsep'), fitBtn, zoomLabel, el('span', 'vsep'), exportBtn, setBtn);
+  top.append(projBtn, title, el('span', 'spacer'), undoBtn, redoBtn, el('span', 'vsep'), modeGroup, el('span', 'vsep'), fitBtn, zoomLabel, el('span', 'vsep'), exportBtn, layersBtn, setBtn);
 
   // ── 左ツールバー
   const toolbar = el('nav', 'toolbar');
@@ -75,9 +80,11 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
   // ── 右パネル（設定）
   const panel = el('aside', 'panel');
   const syncPanel = buildSettingsPanel(panel, app);
+  const layersPanel = el('aside', 'panel layers-panel');
+  const syncLayers = buildLayersPanel(layersPanel, app);
 
   const main = el('div', 'main');
-  main.append(toolbar, stage, panel);
+  main.append(toolbar, stage, panel, layersPanel);
   root.append(top, main);
 
   const fitView = () => {
@@ -98,6 +105,9 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
     hint.textContent = app.mode === 'hand' ? 'ハンド：1本指でキャンバスを移動、2本指でズーム' : app.status || app.tool.hint();
     stage.classList.toggle('hand', app.mode === 'hand');
     syncPanel();
+    setBtn.classList.toggle('active', panel.classList.contains('open'));
+    layersBtn.classList.toggle('active', layersPanel.classList.contains('open'));
+    if (layersPanel.classList.contains('open')) syncLayers();
   };
 
   return { canvas, loupe, stage };
@@ -149,11 +159,39 @@ function buildSettingsPanel(panel: HTMLElement, app: App): () => void {
   num(g, '基準点 Y', () => app.doc.grid.originY, (v) => docSet((d) => (d.grid.originY = v)), -1e9);
   const ob = el('div', 'row-btns');
   const pickOrigin = el('button', 'opt-btn', '基準点をタップで指定');
-  pickOrigin.addEventListener('click', () => { app.setMode('pen'); app.setTool('origin'); panel.classList.remove('open'); });
+  pickOrigin.addEventListener('click', () => {
+    panel.classList.remove('open');
+    (app.tools.pick as PickTool).start('グリッドの基準点にする位置をタップ', (p) => app.mutate((d) => { d.grid.originX = p.x; d.grid.originY = p.y; }));
+  });
   const resetOrigin = el('button', 'opt-btn', '左上に戻す');
   resetOrigin.addEventListener('click', () => docSet((d) => { d.grid.originX = 0; d.grid.originY = 0; }));
   ob.append(pickOrigin, resetOrigin);
   g.append(ob);
+
+  const mi = section('ミラー描画');
+  const axisSel = el('select', 'select-input');
+  axisSel.id = 'mirror-axis';
+  for (const [v, t] of [['none', 'オフ'], ['vertical', '縦の軸（左右対称）'], ['horizontal', '横の軸（上下対称）']]) {
+    const o = el('option', '', t);
+    o.value = v;
+    axisSel.append(o);
+  }
+  axisSel.addEventListener('change', () => docSet((d) => (d.mirror.axis = axisSel.value as MirrorAxis)));
+  syncs.push(() => { axisSel.value = app.doc.mirror.axis; });
+  row(mi, '軸', axisSel);
+  num(mi, '縦の軸の位置 X', () => app.doc.mirror.x, (v) => docSet((d) => (d.mirror.x = v)), -1e9);
+  num(mi, '横の軸の位置 Y', () => app.doc.mirror.y, (v) => docSet((d) => (d.mirror.y = v)), -1e9);
+  const mb = el('div', 'row-btns');
+  const pickAxis = el('button', 'opt-btn', '軸の位置をタップで指定');
+  pickAxis.addEventListener('click', () => {
+    panel.classList.remove('open');
+    (app.tools.pick as PickTool).start('ミラーの軸が通る位置をタップ', (p) =>
+      app.mutate((d) => { d.mirror.x = p.x; d.mirror.y = p.y; if (d.mirror.axis === 'none') d.mirror.axis = 'vertical'; }));
+  });
+  const centerAxis = el('button', 'opt-btn', 'キャンバスの中央に');
+  centerAxis.addEventListener('click', () => docSet((d) => { d.mirror.x = d.width / 2; d.mirror.y = d.height / 2; }));
+  mb.append(pickAxis, centerAxis);
+  mi.append(mb, el('p', 'note', 'オンにすると、直線・曲線・円で描いた図形が軸で折り返した位置にも作られます。'));
 
   const s = section('スナップ');
   check(s, 'グリッド', () => app.settings.snapGrid, setSetting('snapGrid'));
@@ -185,49 +223,6 @@ function download(name: string, text: string, type: string) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
-}
-
-/** 画面内の入力ダイアログ（prompt の代わり） */
-function askText(title: string, initial: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const bg = el('div', 'modal-bg top');
-    const box = el('form', 'modal small');
-    const input = el('input', 'text-input');
-    input.value = initial;
-    input.id = 'ask-text';
-    const btns = el('div', 'modal-actions end');
-    const cancel = el('button', 'opt-btn', 'キャンセル');
-    cancel.type = 'button';
-    const ok = el('button', 'opt-btn active', 'OK');
-    ok.type = 'submit';
-    btns.append(cancel, ok);
-    box.append(el('h2', '', escapeHtml(title)), input, btns);
-    bg.append(box);
-    document.body.append(bg);
-    input.focus();
-    input.select();
-    const done = (v: string | null) => { bg.remove(); resolve(v); };
-    cancel.addEventListener('click', () => done(null));
-    box.addEventListener('submit', (e) => { e.preventDefault(); done(input.value.trim()); });
-  });
-}
-
-/** 画面内の確認ダイアログ（confirm の代わり） */
-function askConfirm(message: string, okLabel: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const bg = el('div', 'modal-bg top');
-    const box = el('div', 'modal small');
-    const btns = el('div', 'modal-actions end');
-    const cancel = el('button', 'opt-btn', 'キャンセル');
-    const ok = el('button', 'opt-btn danger-fill', escapeHtml(okLabel));
-    btns.append(cancel, ok);
-    box.append(el('p', '', escapeHtml(message)), btns);
-    bg.append(box);
-    document.body.append(bg);
-    const done = (v: boolean) => { bg.remove(); resolve(v); };
-    cancel.addEventListener('click', () => done(false));
-    ok.addEventListener('click', () => done(true));
-  });
 }
 
 const safeName = (s: string) => s.replace(/[\\/:*?"<>|]/g, '_') || 'untitled';
@@ -263,7 +258,7 @@ export function openExport(app: App) {
   const update = () => {
     const svg = svgText();
     preview.innerHTML = `<img alt="書き出しのプレビュー" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}">`;
-    const n = app.doc.layers.reduce((s, l) => s + l.fills.length, 0);
+    const n = allLayers(app.doc).reduce((s, l) => s + l.fills.length, 0);
     status.textContent = `塗り ${n}個・${(new Blob([svg]).size / 1024).toFixed(1)} KB。線は範囲を決めるためのものなので、書き出しには含まれません。`;
   };
   seam.addEventListener('change', update);
@@ -357,7 +352,7 @@ export async function openProjects(app: App) {
       ...docs.map((d) => {
         const item = el('div', 'proj-item' + (d.id === app.doc.id ? ' current' : ''));
         const info = el('div', 'proj-info');
-        const shapes = d.layers.reduce((n, l) => n + l.shapes.length, 0);
+        const shapes = allLayers(d).reduce((n, l) => n + l.shapes.length, 0);
         info.append(el('b', '', escapeHtml(d.name)), el('small', '', `${new Date(d.updatedAt).toLocaleString()}・図形 ${shapes}`));
         const open = el('button', 'opt-btn', d.id === app.doc.id ? '編集中' : '開く');
         open.disabled = d.id === app.doc.id;
@@ -386,4 +381,3 @@ export async function openProjects(app: App) {
   render();
 }
 
-const escapeHtml = (s: string) => s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);

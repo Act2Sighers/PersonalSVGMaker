@@ -3,13 +3,22 @@ import type { Vec } from '../types';
 import type { View } from '../view';
 import { button, PointPicker } from './common';
 
-/** グリッドの基準点をタップで指定する一時ツール */
-export class OriginTool implements Tool {
-  id = 'origin' as const;
+/** 位置を1点だけタップで指定させる一時ツール（グリッドの基準点、ミラーの軸など） */
+export class PickTool implements Tool {
+  id = 'pick' as const;
+  private message = '';
+  private onPick: (p: Vec) => void = () => {};
   private picker: PointPicker;
 
   constructor(private app: App) {
     this.picker = new PointPicker(app);
+  }
+
+  start(message: string, onPick: (p: Vec) => void) {
+    this.message = message;
+    this.onPick = onPick;
+    this.app.setMode('pen');
+    this.app.setTool('pick');
   }
 
   down(s: Vec) { this.picker.begin(s); }
@@ -20,15 +29,15 @@ export class OriginTool implements Tool {
   up() {
     const p = this.picker.end();
     if (!p) return;
-    this.app.mutate((d) => { d.grid.originX = p.x; d.grid.originY = p.y; });
     this.app.backToPrevTool();
+    this.onPick(p);
   }
   cancelGesture() {
     this.picker.cancel();
     this.app.requestRender();
   }
   reset() { this.picker.cancel(); }
-  hint() { return 'グリッドの基準点にする位置をタップ'; }
+  hint() { return this.message; }
   options() { return [button('やめる', () => this.app.backToPrevTool())]; }
   overlay(ctx: CanvasRenderingContext2D, view: View) { this.picker.draw(ctx, view); }
   focus() { return this.picker.preview?.p ?? null; }

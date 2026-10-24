@@ -1,8 +1,8 @@
 import type { Doc, Paint } from './types';
 import { fillFace } from './fills';
+import { renderTree } from './doc';
 import { faceToPathData } from './regions';
 
-const esc = (s: string) => s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);
 const n3 = (n: number) => String(+n.toFixed(3));
 
 export interface ExportOptions {
@@ -23,20 +23,15 @@ export function docToSvg(doc: Doc, opts: ExportOptions): string {
     );
     return `url(#${id})`;
   };
-  const layers = doc.layers
-    .filter((l) => l.visible)
-    .map((l) => {
-      const paths = l.fills
-        .map((f) => {
-          const face = fillFace(l, f);
-          if (!face) return '';
-          const paint = paintRef(f.paint);
-          const seam = opts.seamFix ? ` stroke="${paint}" stroke-width="0.5" stroke-linejoin="round"` : '';
-          return `    <path id="${f.id}" d="${faceToPathData(face)}" fill="${paint}" fill-rule="evenodd"${seam}/>`;
-        })
-        .filter(Boolean);
-      return `  <g id="${esc(l.id)}" data-name="${esc(l.name)}">\n${paths.join('\n')}\n  </g>`;
-    });
+  const body = renderTree(doc.layers, '  ', (l, ind) =>
+    l.fills.flatMap((f) => {
+      const face = fillFace(l, f);
+      if (!face) return [];
+      const paint = paintRef(f.paint);
+      const seam = opts.seamFix ? ` stroke="${paint}" stroke-width="0.5" stroke-linejoin="round"` : '';
+      return [`${ind}<path id="${f.id}" d="${faceToPathData(face)}" fill="${paint}" fill-rule="evenodd"${seam}/>`];
+    }),
+  );
   const defsBlock = defs.length ? `  <defs>\n${defs.join('\n')}\n  </defs>\n` : '';
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${doc.width} ${doc.height}" width="${doc.width}" height="${doc.height}">\n${defsBlock}${layers.join('\n')}\n</svg>\n`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${doc.width} ${doc.height}" width="${doc.width}" height="${doc.height}">\n${defsBlock}${body}\n</svg>\n`;
 }

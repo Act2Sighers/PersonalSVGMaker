@@ -354,3 +354,26 @@ export function subCubic(p0: Vec, p1: Vec, p2: Vec, p3: Vec, t0: number, t1: num
   const [left] = split(...right, (t1 - t0) / (1 - t0));
   return left;
 }
+
+/** アフィン変換 x' = a*x + c*y + e, y' = b*x + d*y + f */
+export interface Affine { a: number; b: number; c: number; d: number; e: number; f: number }
+
+export const applyAffine = (m: Affine, p: Vec): Vec => ({ x: m.a * p.x + m.c * p.y + m.e, y: m.b * p.x + m.d * p.y + m.f });
+/** 変換による長さの倍率（拡大縮小・回転・反転だけを扱うので一様） */
+export const affineScale = (m: Affine) => Math.sqrt(Math.abs(m.a * m.d - m.b * m.c));
+
+export const translateM = (d: Vec): Affine => ({ a: 1, b: 0, c: 0, d: 1, e: d.x, f: d.y });
+export function scaleM(pivot: Vec, s: number): Affine {
+  return { a: s, b: 0, c: 0, d: s, e: pivot.x * (1 - s), f: pivot.y * (1 - s) };
+}
+export function rotateM(pivot: Vec, angle: number): Affine {
+  const cs = Math.cos(angle), sn = Math.sin(angle);
+  return { a: cs, b: sn, c: -sn, d: cs, e: pivot.x - cs * pivot.x + sn * pivot.y, f: pivot.y - sn * pivot.x - cs * pivot.y };
+}
+/** 点 p・q を通る直線で折り返す */
+export function reflectM(p: Vec, q: Vec): Affine {
+  const dx = q.x - p.x, dy = q.y - p.y;
+  const l2 = dx * dx + dy * dy || 1;
+  const a = (dx * dx - dy * dy) / l2, b = (2 * dx * dy) / l2;
+  return { a, b, c: b, d: -a, e: p.x - a * p.x - b * p.y, f: p.y - b * p.x + a * p.y };
+}

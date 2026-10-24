@@ -1,12 +1,13 @@
 import type { Doc, Layer, PointRef, Settings, Shape, Vec } from './types';
 import { View } from './view';
 import { History } from './history';
-import { cloneDoc, newDoc, normalizeDoc, pruneSelection } from './doc';
-import { reconcileFills } from './fills';
+import { cloneDoc, cloneShapes, layerEntries, mirrorMatrix, newDoc, normalizeDoc, pruneSelection, transformShape } from './doc';
+import { reconcileFills, type TransformHint } from './fills';
+import type { ClipData } from './clipboard';
 import { SnapContext, type SnapOptions } from './snap';
 import { saveProject, saveSettings, setLastProjectId } from './storage';
 
-export type ToolId = 'select' | 'move' | 'line' | 'bezier' | 'circle' | 'fill' | 'origin';
+export type ToolId = 'select' | 'move' | 'transform' | 'line' | 'bezier' | 'circle' | 'fill' | 'pick';
 export type InputMode = 'pen' | 'hand';
 
 export interface Tool {
@@ -42,6 +43,8 @@ export class App {
   status = '';
   /** 指が触れている画面位置（ルーペ表示用） */
   fingerAt: Vec | null = null;
+  /** コピーした図形と塗り */
+  clipboard: ClipData | null = null;
   private renderQueued = false;
   private saveTimer = 0;
   onRender: () => void = () => {};
@@ -71,20 +74,45 @@ export class App {
     this.refreshUI();
   }
 
-  /** 今は先頭レイヤーに描く（レイヤー機能は段階3で拡張） */
-  activeLayer(): Layer {
-    return this.doc.layers[0];
+  /** 描画先のレイヤー（表示用。編集できるかは問わない） */
+  peekLayer(): Layer | null {
+    return layerEntries(this.doc).find((x) => x.layer.id === this.doc.activeId)?.layer ?? null;
   }
+
+  /** 描画先のレイヤー。フォルダーを選んでいる、またはロック・非表示のときは null（理由を表示する） */
+  drawLayer(): Layer | null {
+    const e = layerEntries(this.doc).find((x) => x.layer.id === this.doc.activeId);
+    if (!e) {
+      this.setStatus('描画先のレイヤーを、レイヤー一覧で選んでください');
+      return null;
+    }
+    if (e.locked) { this.setStatus(`「${e.layer.name}」はロックされています`); return null; }
+    if (!e.visible) { this.setStatus(`「${e.layer.name}」は非表示です`); return null; }
+    return e.layer;
+  }
+
+  /** 図形を描画先のレイヤーに加える。ミラー描画がオンなら、折り返した図形も加える。 */
   addShape(s: Shape) {
-    this.mutate(() => this.activeLayer().shapes.push(s));
+    const layer = this.drawLayer();
+    if (!layer) return;
+    const shapes = [s];
+    const m = mirrorMatrix(this.doc);
+    if (m) {
+      const [c] = cloneShapes([s]);
+      transformShape(c, m);
+      // 折り返しても同じ形（軸上の円など）なら重ねない
+      if (JSON.stringify({ ...c, id: s.id }) !== JSON.stringify(s)) shapes.push(c);
+    }
+    this.mutate(() => layer.shapes.push(...shapes));
   }
 
   /** 変更を履歴に残してから適用する。線が変わった場合は塗りを新しい範囲へ引き継ぐ。 */
-  mutate(fn: (doc: Doc) => void) {
+  mutate(fn: (doc: Doc) => void, opts: { hint?: TransformHint; after?: (doc: Doc) => void } = {}) {
     const before = cloneDoc(this.doc);
     this.history.record(before);
     fn(this.doc);
-    reconcileFills(before, this.doc);
+    reconcileFills(before, this.doc, opts.hint);
+    opts.after?.(this.doc);
     this.changed();
   }
 

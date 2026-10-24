@@ -11,7 +11,8 @@ import { MoveTool } from './tools/move';
 import { LineTool } from './tools/line';
 import { BezierTool } from './tools/bezier';
 import { CircleTool } from './tools/circle';
-import { OriginTool } from './tools/origin';
+import { PickTool } from './tools/pick';
+import { TransformTool } from './tools/transform';
 import { FillTool } from './tools/fill';
 
 const LOUPE_SIZE = 150;
@@ -22,11 +23,12 @@ async function start() {
   app.tools = {
     select: new SelectTool(app),
     move: new MoveTool(app),
+    transform: new TransformTool(app),
     line: new LineTool(app),
     bezier: new BezierTool(app),
     circle: new CircleTool(app),
     fill: new FillTool(app),
-    origin: new OriginTool(app),
+    pick: new PickTool(app),
   };
 
   const { canvas, loupe, stage } = buildUI(document.getElementById('app')!, app);
