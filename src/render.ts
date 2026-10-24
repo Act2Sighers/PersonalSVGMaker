@@ -3,7 +3,7 @@ import type { View } from './view';
 import type { Layer, Paint, Shape, Vec } from './types';
 import { layerFaces } from './fills';
 import { faceAt, traceFace, type Face } from './regions';
-import { allShapes, anchorKeys, layerEntries, getPoint, ref, shapePrims } from './doc';
+import { allShapes, anchorKeys, layerEntries, selectableShapes, getPoint, ref, shapePrims } from './doc';
 import type { Prim } from './geom';
 import type { SnapResult } from './snap';
 
@@ -215,7 +215,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, app: App, view: View, o
   drawMirrorAxis(ctx, app, view, w, h);
   const showPoints = app.toolId === 'select' || app.toolId === 'move' || app.toolId === 'transform';
   if (showPoints) {
-    for (const s of allShapes(app.doc, true, true)) {
+    for (const s of selectableShapes(app.doc)) {
       for (const k of anchorKeys(s)) {
         const p = getPoint(s, k)!;
         const isSel = sel.has(ref(s.id, k));

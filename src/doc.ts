@@ -38,6 +38,13 @@ export function normalizeDoc(d: Doc): Doc {
       if (n.kind === 'folder') { fix((n as Folder).children); continue; }
       const l = n as Layer;
       l.kind = 'layer';
+      // 以前の入れ子のグループは、一番外側のグループにまとめる
+      for (const s of l.shapes as (Shape & { groups?: string[] })[]) {
+        if (s.groups) {
+          if (s.groups.length) s.group = s.groups[0];
+          delete s.groups;
+        }
+      }
       // 以前の「保留中の塗り」は廃止したので取り除く
       const fills = (l.fills ?? []) as (Fill & { pending?: boolean; sig?: unknown })[];
       l.fills = fills.filter((f) => !f.pending).map(({ id, seed, paint }) => ({ id, seed, paint }));
@@ -223,7 +230,7 @@ export function cloneShapes(shapes: Shape[]): Shape[] {
   return shapes.map((s) => {
     const c = structuredClone(s);
     c.id = uid();
-    if (c.groups) c.groups = c.groups.map((g) => groupMap.get(g) ?? (groupMap.set(g, uid()), groupMap.get(g)!));
+    if (c.group) c.group = groupMap.get(c.group) ?? (groupMap.set(c.group, uid()), groupMap.get(c.group)!);
     return c;
   });
 }
@@ -262,14 +269,30 @@ export function makeCorner(doc: Doc, sel: Set<PointRef>) {
   }
 }
 
-/** 存在しない参照と、非表示・ロック中のレイヤーの点を除く */
+/** 選んでいるレイヤーの図形（表示中でロックされていないときだけ）。選択できるのはこれだけ。 */
+export function selectableShapes(doc: Doc): Shape[] {
+  const e = layerEntries(doc).find((x) => x.layer.id === doc.activeId);
+  return e && e.visible && !e.locked ? e.layer.shapes : [];
+}
+
+/**
+ * 選択を整える：選べない図形の点を除き、グループの図形が1つでも選ばれていれば、
+ * そのグループの全図形を図形ごと選んだ状態にする。
+ */
 export function pruneSelection(doc: Doc, sel: Set<PointRef>): Set<PointRef> {
   const out = new Set<PointRef>();
-  const editable = new Map(allShapes(doc, true, true).map((s) => [s.id, s]));
+  const shapes = selectableShapes(doc);
+  const editable = new Map(shapes.map((s) => [s.id, s]));
+  const groups = new Set<string>();
+  for (const r of sel) {
+    const g = editable.get(parseRef(r)[0])?.group;
+    if (g) groups.add(g);
+  }
+  for (const s of shapes) if (s.group && groups.has(s.group)) anchorKeys(s).forEach((k) => out.add(ref(s.id, k)));
   for (const r of sel) {
     const [id, key] = parseRef(r);
     const s = editable.get(id);
-    if (s && getPoint(s, key)) out.add(r);
+    if (s && !(s.group && groups.has(s.group)) && getPoint(s, key)) out.add(r);
   }
   return out;
 }

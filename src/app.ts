@@ -1,7 +1,7 @@
 import type { Doc, Layer, PointRef, Settings, Shape, Vec } from './types';
 import { View } from './view';
 import { History } from './history';
-import { cloneDoc, cloneShapes, layerEntries, mirrorMatrix, newDoc, normalizeDoc, pruneSelection, transformShape } from './doc';
+import { allShapes, cloneDoc, cloneShapes, layerEntries, mirrorMatrix, newDoc, normalizeDoc, pruneSelection, transformShape } from './doc';
 import { reconcileFills, type TransformHint } from './fills';
 import type { ClipData } from './clipboard';
 import { SnapContext, type SnapOptions } from './snap';
@@ -163,8 +163,14 @@ export class App {
     this.refreshUI();
   }
 
+  /** 吸着の対象：設定に応じて、選んでいるレイヤーの図形だけか、表示中のすべての図形 */
+  snapShapes(): Shape[] {
+    if (this.settings.snapScope === 'all') return allShapes(this.doc);
+    const e = layerEntries(this.doc).find((x) => x.layer.id === this.doc.activeId);
+    return e?.visible ? e.layer.shapes : [];
+  }
   snapContext(opts?: SnapOptions) {
-    return new SnapContext(this.doc, this.settings, opts);
+    return new SnapContext(this.doc, this.settings, this.snapShapes(), opts);
   }
   get tol() {
     return TOUCH_TOL_PX / this.view.zoom;

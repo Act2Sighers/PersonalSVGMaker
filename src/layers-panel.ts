@@ -1,6 +1,6 @@
 import type { App } from './app';
 import type { Doc, LayerNode } from './types';
-import { cloneDoc, findNode } from './doc';
+import { cloneDoc, findNode, layerEntries, pruneSelection } from './doc';
 import { askConfirm, askText, el, escapeHtml } from './dialogs';
 import { addFolder, addLayer, moveIntoFolderAbove, moveOutOfFolder, moveShapesToLayer, removeNode, shiftNode } from './layers';
 import { selectedShapeIds } from './clipboard';
@@ -44,14 +44,27 @@ export function buildLayersPanel(panel: HTMLElement, app: App): () => void {
   act('↓', '一覧の下へ（奥に表示）', () => tryMutate((d) => shiftNode(d, activeId(), -1), 'これ以上は下へ動かせません'));
   act('上のフォルダーへ入れる', 'すぐ上にあるフォルダーの中へ入れます', () => tryMutate((d) => moveIntoFolderAbove(d, activeId()), 'すぐ上にフォルダーがありません'));
   act('フォルダーから出す', '', () => tryMutate((d) => moveOutOfFolder(d, activeId()), 'フォルダーの中にありません'));
-  const moveHere = act('選択した図形をここへ', '選択中の図形（と、その図形だけで囲まれた塗り）を、このレイヤーへ移します', () => {
-    const target = app.drawLayer();
-    if (!target) return;
-    const ids = selectedShapeIds(app.sel);
-    let finish = () => {};
-    app.mutate((d) => { finish = moveShapesToLayer(d, ids, target); }, { after: () => finish() });
-    app.setStatus(`${ids.size}個の図形を「${target.name}」へ移しました`);
+  /** 「選択を別のレイヤーへ」を押したあと、移し先のレイヤーを選んでもらっている */
+  let choosingTarget = false;
+  const moveTo = act('選択を別のレイヤーへ', '選択中の図形（と、その図形だけで囲まれた塗り）を、次にタップしたレイヤーへ移します', () => {
+    choosingTarget = !choosingTarget;
+    app.setStatus(choosingTarget ? '移し先のレイヤーをタップしてください' : '');
+    app.refreshUI();
   });
+  const moveSelectionTo = (id: string) => {
+    choosingTarget = false;
+    const target = layerEntries(app.doc).find((e) => e.layer.id === id);
+    if (!target) return app.setStatus('移し先にはレイヤーを選んでください');
+    if (target.locked || !target.visible) return app.setStatus(`「${target.layer.name}」は${target.locked ? 'ロック' : '非表示に'}されています`);
+    const ids = selectedShapeIds(app.sel);
+    const sel = new Set(app.sel);
+    let finish = () => {};
+    app.mutate((d) => { finish = moveShapesToLayer(d, ids, target.layer); d.activeId = id; }, { after: () => finish() });
+    // 移した図形を、移し先のレイヤーで選んだままにする
+    app.sel = pruneSelection(app.doc, sel);
+    app.setStatus(`${ids.size}個の図形を「${target.layer.name}」へ移しました`);
+    app.refreshUI();
+  };
   const del = act('削除', '', async () => {
     const at = findNode(app.doc, activeId());
     if (!at) return;
@@ -87,8 +100,11 @@ export function buildLayersPanel(panel: HTMLElement, app: App): () => void {
     if (n.kind === 'layer') name.append(el('small', '', `${n.shapes.length}`));
     r.append(name);
     r.addEventListener('click', () => {
+      if (choosingTarget) return moveSelectionTo(n.id);
       if (app.doc.activeId === n.id) return;
       app.doc.activeId = n.id;
+      // 選択できるのは選んでいるレイヤーの図形だけなので、切り替えたら選択を解除する
+      app.sel.clear();
       app.scheduleSave();
       app.refreshUI();
     });
@@ -107,6 +123,9 @@ export function buildLayersPanel(panel: HTMLElement, app: App): () => void {
     };
     walk(app.doc.layers, 0, false);
     list.replaceChildren(...rows);
-    moveHere.disabled = !app.sel.size || findNode(app.doc, activeId())?.node.kind !== 'layer';
+    if (!app.sel.size) choosingTarget = false;
+    moveTo.disabled = !app.sel.size;
+    moveTo.classList.toggle('active', choosingTarget);
+    list.classList.toggle('choosing', choosingTarget);
   };
 }

@@ -601,3 +601,8 @@ button:disabled {
   height: 36px;
   padding: 0 10px;
 }
+
+.layer-list.choosing .layer-row:not(.active) {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}

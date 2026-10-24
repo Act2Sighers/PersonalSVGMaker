@@ -11,9 +11,9 @@ export interface PathNode {
   hout: Vec | null;
 }
 
-/** グループ。外側のグループから順に ID を並べる（入れ子にできる） */
+/** グループ（入れ子にはしない）。同じ ID を持つ図形は常にまとめて選択される。 */
 interface Groupable {
-  groups?: string[];
+  group?: string;
 }
 
 export interface PathShape extends Groupable {
@@ -106,6 +106,8 @@ export interface Settings {
   snapExtensions: boolean;
   loupe: boolean;
   showLines: boolean;
+  /** 吸着の対象：選んでいるレイヤーだけか、表示中のすべてのレイヤーか */
+  snapScope: 'layer' | 'all';
 }
 
 /**

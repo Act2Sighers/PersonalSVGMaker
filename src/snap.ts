@@ -1,5 +1,5 @@
-import type { Doc, Settings, Vec } from './types';
-import { allShapes, anchorKeys, getPoint, shapePrims } from './doc';
+import type { Doc, Settings, Shape, Vec } from './types';
+import { anchorKeys, getPoint, shapePrims } from './doc';
 import { closestOnPrim, dedupe, dist, intersect, lineLineInfinite, perpendicularFeet, projectToLine, tangentPoints, type Prim } from './geom';
 
 export type SnapKind = 'point' | 'intersection' | 'tangent' | 'perp' | 'online' | 'extension' | 'grid' | 'free';
@@ -40,8 +40,9 @@ export class SnapContext {
   prims: Prim[] = [];
   private ref: Vec | null;
 
-  constructor(private doc: Doc, private settings: Settings, opts: SnapOptions = {}) {
-    for (const s of allShapes(doc)) {
+  /** shapes は吸着の対象にする図形（設定に応じて、選んでいるレイヤーだけ、またはすべての表示中のレイヤー） */
+  constructor(private doc: Doc, private settings: Settings, shapes: Shape[], opts: SnapOptions = {}) {
+    for (const s of shapes) {
       for (const k of anchorKeys(s)) {
         const p = getPoint(s, k);
         if (p) this.points.push(p);

@@ -1,7 +1,7 @@
 import type { App, Tool } from '../app';
 import type { PointRef, Vec } from '../types';
 import type { View } from '../view';
-import { allShapes, anchorKeys, deletePoints, getPoint, makeCorner, ref, shapePrims, uid } from '../doc';
+import { anchorKeys, deletePoints, findShape, getPoint, makeCorner, parseRef, pruneSelection, ref, selectableShapes, shapePrims, uid } from '../doc';
 import { copyData, selectedShapeIds } from '../clipboard';
 import type { MoveTool } from './move';
 import type { Shape } from '../types';
@@ -34,6 +34,8 @@ export class SelectTool implements Tool {
     if (!this.downAt) return;
     if (this.boxing) this.selectBox(this.downAt, s);
     else this.tap(s);
+    // グループの図形が含まれていれば、グループ全体の選択に広げる
+    this.app.sel = pruneSelection(this.app.doc, this.app.sel);
     this.cancelGesture();
     this.app.refreshUI();
   }
@@ -49,7 +51,7 @@ export class SelectTool implements Tool {
     const app = this.app;
     let best: PointRef | null = null;
     let bestD = 22;
-    for (const sh of allShapes(app.doc, true, true)) {
+    for (const sh of selectableShapes(app.doc)) {
       const keys = anchorKeys(sh);
       if (sh.type === 'path')
         sh.nodes.forEach((_, i) => {
@@ -68,28 +70,30 @@ export class SelectTool implements Tool {
   private tap(s: Vec) {
     const app = this.app;
     const pt = this.pickPoint(s);
-    if (pt) {
-      if (this.additive) app.sel.has(pt) ? app.sel.delete(pt) : app.sel.add(pt);
-      else app.sel = new Set([pt]);
-      return;
-    }
-    const w = app.view.toWorld(s);
-    const hit = allShapes(app.doc, true, true)
-      .map((sh) => ({ sh, d: Math.min(...shapePrims(sh).map((p) => distToPrim(w, p))) }))
-      .filter((x) => x.d < app.tol * 0.8)
-      .sort((a, b) => a.d - b.d)[0];
-    if (hit) {
-      // グループに入っていれば、一番外側のグループごと選ぶ
-      const g = hit.sh.groups?.[0];
-      const members = g ? allShapes(app.doc, true, true).filter((x) => x.groups?.[0] === g) : [hit.sh];
-      const refs = members.flatMap((m) => anchorKeys(m).map((k) => ref(m.id, k)));
+    const toggle = (refs: PointRef[]) => {
       if (this.additive) {
         const all = refs.every((r) => app.sel.has(r));
         refs.forEach((r) => (all ? app.sel.delete(r) : app.sel.add(r)));
       } else app.sel = new Set(refs);
-      return;
+    };
+    if (pt) {
+      const sh = findShape(app.doc, parseRef(pt)[0]);
+      // グループの図形の点は単独では選べない（グループごと選ぶ）
+      return toggle(sh?.group ? this.groupRefs(sh.group) : [pt]);
     }
+    const w = app.view.toWorld(s);
+    const hit = selectableShapes(app.doc)
+      .map((sh) => ({ sh, d: Math.min(...shapePrims(sh).map((p) => distToPrim(w, p))) }))
+      .filter((x) => x.d < app.tol * 0.8)
+      .sort((a, b) => a.d - b.d)[0];
+    if (hit) return toggle(hit.sh.group ? this.groupRefs(hit.sh.group) : anchorKeys(hit.sh).map((k) => ref(hit.sh.id, k)));
     if (!this.additive) app.sel.clear();
+  }
+
+  private groupRefs(g: string): PointRef[] {
+    return selectableShapes(this.app.doc)
+      .filter((x) => x.group === g)
+      .flatMap((m) => anchorKeys(m).map((k) => ref(m.id, k)));
   }
 
   private selectBox(a: Vec, b: Vec) {
@@ -97,7 +101,7 @@ export class SelectTool implements Tool {
     const wa = app.view.toWorld(a), wb = app.view.toWorld(b);
     const x0 = Math.min(wa.x, wb.x), x1 = Math.max(wa.x, wb.x), y0 = Math.min(wa.y, wb.y), y1 = Math.max(wa.y, wb.y);
     if (!this.additive) app.sel.clear();
-    for (const sh of allShapes(app.doc, true, true))
+    for (const sh of selectableShapes(app.doc))
       for (const k of anchorKeys(sh)) {
         const p = getPoint(sh, k)!;
         if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) app.sel.add(ref(sh.id, k));
@@ -112,28 +116,31 @@ export class SelectTool implements Tool {
 
   private selectedShapes(): Shape[] {
     const ids = selectedShapeIds(this.app.sel);
-    return allShapes(this.app.doc, true, true).filter((s) => ids.has(s.id));
+    return selectableShapes(this.app.doc).filter((s) => ids.has(s.id));
   }
 
+  /** グループ化できるか（2つ以上の図形があり、既にあるグループと完全に同じではない） */
+  private canGroup(shapes: Shape[]): boolean {
+    if (shapes.length < 2) return false;
+    const g = shapes[0].group;
+    if (!g || shapes.some((s) => s.group !== g)) return true;
+    return selectableShapes(this.app.doc).some((s) => s.group === g && !shapes.includes(s));
+  }
+
+  /** 選択した図形を1つのグループにする。中に含まれていた古いグループは、新しいグループに置き換わる。 */
   private group() {
-    const ids = new Set(this.selectedShapes().map((s) => s.id));
-    if (ids.size < 2) return this.app.setStatus('2つ以上の図形を選んでください');
+    const shapes = this.selectedShapes();
+    if (!this.canGroup(shapes)) return;
+    const ids = new Set(shapes.map((s) => s.id));
     const g = uid();
-    this.app.mutate((d) => allShapes(d, false).forEach((s) => { if (ids.has(s.id)) s.groups = [g, ...(s.groups ?? [])]; }));
-    // 選択も図形全体に広げる
-    this.app.sel = new Set(allShapes(this.app.doc, false).filter((s) => ids.has(s.id)).flatMap((s) => anchorKeys(s).map((k) => ref(s.id, k))));
+    this.app.mutate((d) => selectableShapes(d).forEach((s) => { if (ids.has(s.id)) s.group = g; }));
     this.app.setStatus(`${ids.size}個の図形をグループにしました`);
   }
 
   private ungroup() {
-    const outer = new Set(this.selectedShapes().map((s) => s.groups?.[0]).filter((g): g is string => !!g));
-    if (!outer.size) return this.app.setStatus('グループが選ばれていません');
-    this.app.mutate((d) => allShapes(d, false).forEach((s) => {
-      if (s.groups?.[0] && outer.has(s.groups[0])) {
-        s.groups = s.groups.slice(1);
-        if (!s.groups.length) delete s.groups;
-      }
-    }));
+    const groups = new Set(this.selectedShapes().map((s) => s.group).filter((g): g is string => !!g));
+    if (!groups.size) return;
+    this.app.mutate((d) => selectableShapes(d).forEach((s) => { if (s.group && groups.has(s.group)) delete s.group; }));
     this.app.setStatus('グループを解除しました');
   }
 
@@ -149,12 +156,12 @@ export class SelectTool implements Tool {
     const app = this.app;
     const has = app.sel.size > 0;
     const shapes = has ? this.selectedShapes() : [];
-    const grouped = shapes.some((s) => s.groups?.length);
+    const grouped = shapes.some((s) => s.group);
     const paste = () => app.clipboard && (app.tools.move as MoveTool).startPaste(app.clipboard);
     return [
       button('追加選択', () => { this.additive = !this.additive; app.refreshUI(); }, { active: this.additive, title: 'オンにすると、タップで選択に追加／解除します' }),
       button('全選択', () => {
-        app.sel = new Set(allShapes(app.doc, true, true).flatMap((sh) => anchorKeys(sh).map((k) => ref(sh.id, k))));
+        app.sel = new Set(selectableShapes(app.doc).flatMap((sh) => anchorKeys(sh).map((k) => ref(sh.id, k))));
         app.refreshUI();
       }),
       button('解除', () => { app.sel.clear(); app.refreshUI(); }, { disabled: !has }),
@@ -162,7 +169,7 @@ export class SelectTool implements Tool {
       button('移動へ', () => app.setTool('move'), { disabled: !has }),
       button('変形へ', () => app.setTool('transform'), { disabled: !has }),
       separator(),
-      button('グループ化', () => this.group(), { disabled: shapes.length < 2 }),
+      button('グループ化', () => this.group(), { disabled: !this.canGroup(shapes) }),
       button('グループ解除', () => this.ungroup(), { disabled: !grouped }),
       separator(),
       button('コピー', () => { this.copy(); app.refreshUI(); }, { disabled: !has }),

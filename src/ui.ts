@@ -194,6 +194,16 @@ function buildSettingsPanel(panel: HTMLElement, app: App): () => void {
   mi.append(mb, el('p', 'note', 'オンにすると、直線・曲線・円で描いた図形が軸で折り返した位置にも作られます。'));
 
   const s = section('スナップ');
+  const scopeSel = el('select', 'select-input');
+  scopeSel.id = 'snap-scope';
+  for (const [v, t] of [['layer', '選んでいるレイヤーだけ'], ['all', 'すべてのレイヤー']]) {
+    const o = el('option', '', t);
+    o.value = v;
+    scopeSel.append(o);
+  }
+  scopeSel.addEventListener('change', () => app.updateSettings({ snapScope: scopeSel.value as Settings['snapScope'] }));
+  syncs.push(() => { scopeSel.value = app.settings.snapScope; });
+  row(s, '吸着の対象', scopeSel);
   check(s, 'グリッド', () => app.settings.snapGrid, setSetting('snapGrid'));
   check(s, '端点・中心', () => app.settings.snapPoints, setSetting('snapPoints'));
   check(s, '交点・接点', () => app.settings.snapIntersections, setSetting('snapIntersections'));
