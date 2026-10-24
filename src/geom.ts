@@ -277,3 +277,80 @@ export function circumcenter(a: Vec, b: Vec, c: Vec): Vec | null {
     y: (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d,
   };
 }
+
+const TANGENT_EPS = 1e-3;
+
+/**
+ * 2つの要素が接している点（交わらずに触れている点）。
+ * 接するように描いた図形でも計算誤差で交点が出ないことがあるため、少しの隙間は許容する。
+ */
+export function tangentPoints(p: Prim, q: Prim): Vec[] {
+  if (p.kind === 'circle' && q.kind === 'line') return tangentPoints(q, p);
+  if (p.kind === 'line' && q.kind === 'circle') {
+    const ab = sub(p.b, p.a);
+    const l2 = dot(ab, ab);
+    if (l2 < 1e-12) return [];
+    const t = dot(sub(q.c, p.a), ab) / l2;
+    if (t < -1e-9 || t > 1 + 1e-9) return [];
+    const foot = add(p.a, mul(ab, t));
+    return Math.abs(dist(foot, q.c) - q.r) < TANGENT_EPS ? [foot] : [];
+  }
+  if (p.kind === 'circle' && q.kind === 'circle') {
+    const d = dist(p.c, q.c);
+    if (d < 1e-9) return [];
+    const u = mul(sub(q.c, p.c), 1 / d);
+    if (Math.abs(d - (p.r + q.r)) < TANGENT_EPS) return [add(p.c, mul(u, p.r))]; // 外接
+    if (Math.abs(d - Math.abs(p.r - q.r)) < TANGENT_EPS) return [p.r > q.r ? add(p.c, mul(u, p.r)) : sub(q.c, mul(u, q.r))]; // 内接
+    return [];
+  }
+  if (q.kind === 'cubic' && p.kind !== 'cubic') return tangentPoints(q, p);
+  if (p.kind === 'cubic' && q.kind !== 'cubic') {
+    // 曲線上の点から相手までの距離が、ほぼ 0 の極小になる所
+    const N = 64;
+    const f = (pt: Vec) => dist(pt, closestOnPrim(pt, q));
+    const ds: number[] = [];
+    for (let i = 0; i <= N; i++) ds.push(f(cubicAt(p.p0, p.p1, p.p2, p.p3, i / N)));
+    const out: Vec[] = [];
+    for (let i = 1; i < N; i++) {
+      if (!(ds[i] <= ds[i - 1] && ds[i] <= ds[i + 1]) || ds[i] > 1) continue;
+      const t = refineCubic(p, (i - 1) / N, (i + 1) / N, f);
+      const pt = cubicAt(p.p0, p.p1, p.p2, p.p3, t);
+      if (f(pt) < TANGENT_EPS) out.push(pt);
+    }
+    return out;
+  }
+  return [];
+}
+
+/** 要素上の点 pt のパラメータ（線分・曲線は 0〜1、円は角度 0〜2π） */
+export function paramOnPrim(pr: Prim, pt: Vec): number {
+  if (pr.kind === 'line') {
+    const ab = sub(pr.b, pr.a);
+    const l2 = dot(ab, ab);
+    return l2 === 0 ? 0 : Math.max(0, Math.min(1, dot(sub(pt, pr.a), ab) / l2));
+  }
+  if (pr.kind === 'circle') {
+    const a = Math.atan2(pt.y - pr.c.y, pt.x - pr.c.x);
+    return a < 0 ? a + Math.PI * 2 : a;
+  }
+  const N = 64;
+  let bestT = 0, bestD = Infinity;
+  for (let i = 0; i <= N; i++) {
+    const d = dist(pt, cubicAt(pr.p0, pr.p1, pr.p2, pr.p3, i / N));
+    if (d < bestD) { bestD = d; bestT = i / N; }
+  }
+  return refineCubic(pr, Math.max(0, bestT - 1 / N), Math.min(1, bestT + 1 / N), (q) => dist(pt, q));
+}
+
+/** 3次ベジェの t0〜t1 の部分 */
+export function subCubic(p0: Vec, p1: Vec, p2: Vec, p3: Vec, t0: number, t1: number): [Vec, Vec, Vec, Vec] {
+  const split = (a: Vec, b: Vec, c: Vec, d: Vec, t: number): [[Vec, Vec, Vec, Vec], [Vec, Vec, Vec, Vec]] => {
+    const ab = lerp(a, b, t), bc = lerp(b, c, t), cd = lerp(c, d, t);
+    const abc = lerp(ab, bc, t), bcd = lerp(bc, cd, t), m = lerp(abc, bcd, t);
+    return [[a, ab, abc, m], [m, bcd, cd, d]];
+  };
+  const [, right] = split(p0, p1, p2, p3, t0);
+  if (t1 >= 1) return right;
+  const [left] = split(...right, (t1 - t0) / (1 - t0));
+  return left;
+}

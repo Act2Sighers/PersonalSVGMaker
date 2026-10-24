@@ -1,8 +1,8 @@
 import type { Doc, Settings, Vec } from './types';
 import { allShapes, anchorKeys, getPoint, shapePrims } from './doc';
-import { closestOnPrim, dedupe, dist, intersect, lineLineInfinite, perpendicularFeet, projectToLine, type Prim } from './geom';
+import { closestOnPrim, dedupe, dist, intersect, lineLineInfinite, perpendicularFeet, projectToLine, tangentPoints, type Prim } from './geom';
 
-export type SnapKind = 'point' | 'intersection' | 'perp' | 'online' | 'extension' | 'grid' | 'free';
+export type SnapKind = 'point' | 'intersection' | 'tangent' | 'perp' | 'online' | 'extension' | 'grid' | 'free';
 
 export interface SnapResult {
   p: Vec;
@@ -14,6 +14,7 @@ export interface SnapResult {
 export const SNAP_LABEL: Record<SnapKind, string> = {
   point: '端点',
   intersection: '交点',
+  tangent: '接点',
   perp: '垂線・接点',
   online: '線上',
   extension: '延長線',
@@ -33,6 +34,7 @@ export interface SnapOptions {
 export class SnapContext {
   points: Vec[] = [];
   intersections: Vec[] = [];
+  tangents: Vec[] = [];
   feet: Vec[] = [];
   lines: { a: Vec; b: Vec }[] = [];
   prims: Prim[] = [];
@@ -52,10 +54,17 @@ export class SnapContext {
 
     if (settings.snapIntersections) {
       const pts: Vec[] = [];
+      const tans: Vec[] = [];
       for (let i = 0; i < this.prims.length; i++)
-        for (let j = i + 1; j < this.prims.length; j++) pts.push(...intersect(this.prims[i], this.prims[j]));
+        for (let j = i + 1; j < this.prims.length; j++) {
+          pts.push(...intersect(this.prims[i], this.prims[j]));
+          tans.push(...tangentPoints(this.prims[i], this.prims[j]));
+        }
       // 端点と同じ位置の交点（隣り合う線分のつなぎ目）は端点として扱う
-      this.intersections = dedupe(pts).filter((p) => !this.points.some((q) => dist(p, q) < 1e-4));
+      const notPoint = (p: Vec) => !this.points.some((q) => dist(p, q) < 1e-4);
+      this.tangents = dedupe(tans, 1e-3).filter(notPoint);
+      // 接点の近くに出る誤差由来の交点は接点にまとめる
+      this.intersections = dedupe(pts).filter((p) => notPoint(p) && !this.tangents.some((q) => dist(p, q) < 1e-2));
     }
     if (settings.snapPerp && this.ref) {
       const r = this.ref;
@@ -74,6 +83,7 @@ export class SnapContext {
     };
     if (st.snapPoints) for (const p of this.points) consider(p, 'point', 0.85); // 端点を少し優先
     for (const p of this.intersections) consider(p, 'intersection', 1);
+    for (const p of this.tangents) consider(p, 'tangent', 1);
     if (this.ref) for (const p of this.feet) consider(p, 'perp', 0.95, [{ a: this.ref, b: p }]);
     if (best) return best;
 

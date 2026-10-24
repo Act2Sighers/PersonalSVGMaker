@@ -142,6 +142,7 @@ export function drawSnap(ctx: CanvasRenderingContext2D, view: View, r: SnapResul
   if (r.kind === 'point') ctx.rect(s.x - 7, s.y - 7, 14, 14);
   else if (r.kind === 'intersection') { ctx.moveTo(s.x - 7, s.y - 7); ctx.lineTo(s.x + 7, s.y + 7); ctx.moveTo(s.x + 7, s.y - 7); ctx.lineTo(s.x - 7, s.y + 7); }
   else if (r.kind === 'extension') { ctx.arc(s.x, s.y, 7, 0, Math.PI * 2); }
+  else if (r.kind === 'tangent') { ctx.arc(s.x, s.y - 4, 4, 0, Math.PI * 2); ctx.moveTo(s.x - 9, s.y); ctx.lineTo(s.x + 9, s.y); }
   else if (r.kind === 'online') { ctx.moveTo(s.x, s.y - 8); ctx.lineTo(s.x + 8, s.y); ctx.lineTo(s.x, s.y + 8); ctx.lineTo(s.x - 8, s.y); ctx.closePath(); }
   else if (r.kind === 'perp') { ctx.moveTo(s.x - 8, s.y + 6); ctx.lineTo(s.x + 8, s.y + 6); ctx.moveTo(s.x, s.y + 6); ctx.lineTo(s.x, s.y - 9); }
   else if (r.kind === 'grid') { ctx.moveTo(s.x - 8, s.y); ctx.lineTo(s.x + 8, s.y); ctx.moveTo(s.x, s.y - 8); ctx.lineTo(s.x, s.y + 8); }
