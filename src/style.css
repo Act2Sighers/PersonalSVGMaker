@@ -443,9 +443,6 @@ button:disabled {
 .hint {
   white-space: pre-line;
 }
-.hint.warn {
-  background: rgba(120, 52, 18, 0.92);
-}
 .color-field {
   display: inline-flex;
   align-items: center;

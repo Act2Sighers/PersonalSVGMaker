@@ -1,4 +1,4 @@
-import type { Doc, Layer, PathNode, PathShape, PointRef, Shape, Vec } from './types';
+import type { Doc, Fill, Layer, PathNode, PathShape, PointRef, Shape, Vec } from './types';
 import { add, sub, type Prim } from './geom';
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -26,7 +26,11 @@ export const cloneDoc = (d: Doc): Doc => structuredClone(d);
 
 /** 古い形式で保存された作品を今の形式に揃える */
 export function normalizeDoc(d: Doc): Doc {
-  for (const l of d.layers) l.fills ??= [];
+  for (const l of d.layers) {
+    // 以前の「保留中の塗り」は廃止したので取り除く
+    const fills = (l.fills ?? []) as (Fill & { pending?: boolean; sig?: unknown })[];
+    l.fills = fills.filter((f) => !f.pending).map(({ id, seed, paint }) => ({ id, seed, paint }));
+  }
   return d;
 }
 

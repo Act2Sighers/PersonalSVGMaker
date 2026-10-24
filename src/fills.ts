@@ -4,16 +4,13 @@ import { computeFaces, faceAt, pointInFace, type Face } from './regions';
 
 /** 境界の線がこの割合以上一致していれば「同じ範囲が形を変えたもの」とみなす */
 const SAME_SHAPE = 0.75;
-/** 元の範囲の内側に収まる新しい範囲は、分割されたものとみなす（面積がこの倍率まで） */
-const SPLIT_AREA = 1.05;
-/** 分割とみなすのに必要な、元の範囲との線の共通度 */
+/** 位置で見つけた元の範囲を優先するのに必要な、線の共通度 */
 const SHARED_SOME = 0.3;
 
-function jaccard(a: Set<string>, b: Iterable<string>): number {
-  const bs = new Set(b);
+function jaccard(a: Set<string>, b: Set<string>): number {
   let inter = 0;
-  for (const x of a) if (bs.has(x)) inter++;
-  const union = a.size + bs.size - inter;
+  for (const x of a) if (b.has(x)) inter++;
+  const union = a.size + b.size - inter;
   return union ? inter / union : 0;
 }
 
@@ -26,67 +23,77 @@ export function layerFaces(l: Layer): Face[] {
   return computeFaces(l.shapes);
 }
 
-/** 塗りが今どの範囲を塗っているか（保留中なら null） */
+/** 塗りが今どの範囲を塗っているか */
 export function fillFace(l: Layer, f: Fill): Face | null {
-  return f.pending ? null : faceAt(layerFaces(l), f.seed);
+  return faceAt(layerFaces(l), f.seed);
+}
+
+/** 範囲の内側に散らばった確認用の点 */
+function samplePoints(f: Face): Vec[] {
+  const poly = f.outer.poly;
+  const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const out: Vec[] = [f.interior];
+  const N = 8;
+  for (let i = 0; i < N; i++)
+    for (let j = 0; j < N; j++) {
+      const p = { x: x0 + ((i + 0.5) / N) * (x1 - x0), y: y0 + ((j + 0.5) / N) * (y1 - y0) };
+      if (pointInFace(p, f)) out.push(p);
+    }
+  return out;
 }
 
 /**
- * 線が変わったあとに、塗りを新しい範囲へ引き継ぐ。
- *  - 境界の線がほぼ同じ範囲 → 移動・変形したものとして引き継ぐ
- *  - 元の範囲の内側に収まる範囲 → 分割されたものとして、それぞれに引き継ぐ
- *  - 引き継ぎ先がない（範囲が開いた）→ 保留にし、同じ線で閉じ直されたら塗り直す
+ * 線が変わったあとに、塗りを新しい範囲へ付け直す。
+ *  - 境界の線がほぼ同じ範囲 → 移動・変形したものとして、同じ塗りを引き継ぐ
+ *  - それ以外 → 範囲の内側が、変更前にどの塗りの上にあったかを調べ、いちばん多い塗りにする
+ *    （塗られていなかった部分が多ければ塗らない）
+ *  - 線が閉じなくなった範囲は存在しないので、その塗りは消える
  */
 export function reconcileFills(before: Doc, after: Doc) {
   for (const layer of after.layers) {
     const old = before.layers.find((l) => l.id === layer.id);
-    if (!old || !layer.fills.length) continue;
+    if (!old || !old.fills.length) continue;
     if (JSON.stringify(old.shapes) === JSON.stringify(layer.shapes)) continue;
 
     const oldFaces = layerFaces(old);
-    const newFaces = layerFaces(layer);
-
-    type Parent = { face: Face | null; sig: Set<string>; fill: Fill | null };
-    const parents: Parent[] = oldFaces.map((face) => ({ face, sig: face.sig, fill: null }));
-    for (const f of layer.fills) {
-      const face = f.pending ? null : faceAt(oldFaces, f.seed);
-      const p = face && parents.find((x) => x.face === face);
-      if (p) p.fill = f;
-      else parents.push({ face: null, sig: new Set(f.sig), fill: f });
+    const fillOf = new Map<Face, Fill>();
+    for (const f of old.fills) {
+      const face = faceAt(oldFaces, f.seed);
+      if (face) fillOf.set(face, f);
     }
 
-    const children = new Map<Parent, Face[]>();
-    for (const nf of newFaces) {
-      // 線の一致で探す（移動・変形）
-      let bySig: Parent | null = null, bestScore = SAME_SHAPE;
-      for (const p of parents) {
-        const s = jaccard(p.sig, nf.sig);
-        if (s >= bestScore) { bestScore = s; bySig = p; }
-      }
-      // 位置で探す（分割・変化なし）：元の範囲の中に収まっている
-      let byPos: Parent | null = null;
-      for (const p of parents)
-        if (p.face && pointInFace(nf.interior, p.face) && nf.area <= p.face.area * SPLIT_AREA && (!byPos || p.face.area < byPos.face!.area)) byPos = p;
-      // 両方見つかって食い違うときは、位置で見つけた範囲と線が少しでも共通していればそちらを優先
-      // （別の図形の上へ移動してきた場合は、線が共通しないので線の一致を優先する）
-      let best = byPos ?? bySig;
-      if (byPos && bySig && byPos !== bySig && jaccard(byPos.sig, nf.sig) < SHARED_SOME) best = bySig;
-      if (best) children.set(best, [...(children.get(best) ?? []), nf]);
-    }
-
+    const used = new Set<string>();
     const fills: Fill[] = [];
-    for (const p of parents) {
-      if (!p.fill) continue;
-      const kids = children.get(p) ?? [];
-      if (!kids.length) {
-        fills.push({ ...p.fill, pending: true, sig: [...p.sig] });
+    const add = (src: Fill, face: Face, paint: Paint) => {
+      const id = used.has(src.id) ? uid() : src.id;
+      used.add(id);
+      fills.push({ id, seed: face.interior, paint });
+    };
+
+    for (const nf of layerFaces(layer)) {
+      let bySig: Face | null = null, bestScore = SAME_SHAPE;
+      for (const of of oldFaces) {
+        const s = jaccard(of.sig, nf.sig);
+        if (s >= bestScore) { bestScore = s; bySig = of; }
+      }
+      const here = faceAt(oldFaces, nf.interior);
+      // 移動・変形：位置で見つかる元の範囲が無関係なら、線の一致を信じる
+      if (bySig && bySig !== here && (!here || jaccard(here.sig, nf.sig) < SHARED_SOME)) {
+        const f = fillOf.get(bySig);
+        if (f) add(f, nf, movePaint(f.paint, { x: nf.centroid.x - bySig.centroid.x, y: nf.centroid.y - bySig.centroid.y }));
         continue;
       }
-      kids.forEach((k, i) => {
-        const moved = p.face && jaccard(p.face.sig, k.sig) >= SAME_SHAPE;
-        const d = moved ? { x: k.centroid.x - p.face!.centroid.x, y: k.centroid.y - p.face!.centroid.y } : { x: 0, y: 0 };
-        fills.push({ id: i === 0 ? p.fill!.id : uid(), seed: k.interior, paint: movePaint(p.fill!.paint, d), sig: [...k.sig], pending: false });
-      });
+      // 位置で決める：内側の点がどの塗りの上にあったかの多数決
+      const votes = new Map<Fill | null, number>();
+      for (const p of samplePoints(nf)) {
+        const of = faceAt(oldFaces, p);
+        const f = (of && fillOf.get(of)) ?? null;
+        votes.set(f, (votes.get(f) ?? 0) + 1);
+      }
+      let winner: Fill | null = null, top = 0;
+      for (const [f, n] of votes) if (n > top || (n === top && f)) { top = n; winner = f; }
+      if (winner) add(winner, nf, winner.paint);
     }
     layer.fills = fills;
   }
@@ -97,11 +104,7 @@ export function applyFill(layer: Layer, p: Vec, paint: Paint | null): boolean {
   const faces = layerFaces(layer);
   const face = faceAt(faces, p);
   if (!face) return false;
-  layer.fills = layer.fills.filter((f) => f.pending || faceAt(faces, f.seed) !== face);
-  if (paint) layer.fills.push({ id: uid(), seed: face.interior, paint, sig: [...face.sig], pending: false });
+  layer.fills = layer.fills.filter((f) => faceAt(faces, f.seed) !== face);
+  if (paint) layer.fills.push({ id: uid(), seed: face.interior, paint });
   return true;
-}
-
-export function pendingCount(doc: Doc): number {
-  return doc.layers.reduce((n, l) => n + l.fills.filter((f) => f.pending).length, 0);
 }

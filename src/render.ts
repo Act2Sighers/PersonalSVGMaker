@@ -176,33 +176,8 @@ function drawFills(ctx: CanvasRenderingContext2D, layer: Layer) {
   if (!layer.fills.length) return;
   const faces = layerFaces(layer);
   for (const f of layer.fills) {
-    const face = f.pending ? null : faceAt(faces, f.seed);
+    const face = faceAt(faces, f.seed);
     if (face) paintFace(ctx, face, f.paint);
-  }
-}
-
-/** 範囲が開いて保留中の塗りの目印（画面座標系） */
-function drawPending(ctx: CanvasRenderingContext2D, view: View, layer: Layer) {
-  for (const f of layer.fills) {
-    if (!f.pending) continue;
-    const s = view.toScreen(f.seed);
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, 13, 0, Math.PI * 2);
-    ctx.fillStyle = f.paint.color;
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = COLORS.draft;
-    ctx.setLineDash([3, 2]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 17px -apple-system, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 3;
-    ctx.strokeText('!', s.x, s.y + 1);
-    ctx.fillText('!', s.x, s.y + 1);
   }
 }
 
@@ -235,7 +210,6 @@ export function drawScene(ctx: CanvasRenderingContext2D, app: App, view: View, o
   strokeShapes(ctx, view, shapes.filter(fullySelected), COLORS.lineSel, 2);
 
   screenTransform(ctx, dpr);
-  for (const l of app.doc.layers) if (l.visible) drawPending(ctx, view, l);
   drawOrigin(ctx, app, view);
   const showPoints = app.toolId === 'select' || app.toolId === 'move';
   if (showPoints) {

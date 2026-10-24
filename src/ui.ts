@@ -3,7 +3,6 @@ import type { Doc, Settings } from './types';
 import { ICONS } from './icons';
 import { docToLineSvg, newDoc, uid } from './doc';
 import { docToSvg } from './export';
-import { pendingCount } from './fills';
 import { deleteProject, listProjects, loadProject } from './storage';
 
 const TOOLS: { id: ToolId; label: string }[] = [
@@ -96,10 +95,7 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
     zoomLabel.textContent = `${Math.round(app.view.zoom * 100)}%`;
     for (const [id, b] of toolBtns) b.classList.toggle('active', id === app.toolId);
     options.replaceChildren(...app.tool.options());
-    const pend = pendingCount(app.doc);
-    const warn = pend ? `範囲が開いたため保留中の塗りが${pend}件あります（!印）。線を閉じ直すと塗り直されます。\n` : '';
-    hint.textContent = warn + (app.mode === 'hand' ? 'ハンド：1本指でキャンバスを移動、2本指でズーム' : app.status || app.tool.hint());
-    hint.classList.toggle('warn', pend > 0);
+    hint.textContent = app.mode === 'hand' ? 'ハンド：1本指でキャンバスを移動、2本指でズーム' : app.status || app.tool.hint();
     stage.classList.toggle('hand', app.mode === 'hand');
     syncPanel();
   };
@@ -267,7 +263,7 @@ export function openExport(app: App) {
   const update = () => {
     const svg = svgText();
     preview.innerHTML = `<img alt="書き出しのプレビュー" src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}">`;
-    const n = app.doc.layers.reduce((s, l) => s + l.fills.filter((f) => !f.pending).length, 0);
+    const n = app.doc.layers.reduce((s, l) => s + l.fills.length, 0);
     status.textContent = `塗り ${n}個・${(new Blob([svg]).size / 1024).toFixed(1)} KB。線は範囲を決めるためのものなので、書き出しには含まれません。`;
   };
   seam.addEventListener('change', update);

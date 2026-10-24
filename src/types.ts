@@ -33,17 +33,11 @@ export type Paint =
   /** 線形グラデーション。(x1,y1) で color、(x2,y2) で color2 */
   | { type: 'linear'; color: string; color2: string; x1: number; y1: number; x2: number; y2: number };
 
-/**
- * 塗り。範囲そのものは保存せず、毎回線から求め直す。
- * seed はその範囲の内側の点、sig は範囲の境界になっている線の一覧。
- */
+/** 塗り。範囲そのものは保存せず、毎回線から求め直す。seed はその範囲の内側の点。 */
 export interface Fill {
   id: string;
   seed: Vec;
   paint: Paint;
-  sig: string[];
-  /** 範囲が開いてしまい、塗れずに保留している */
-  pending: boolean;
 }
 
 export interface Layer {
