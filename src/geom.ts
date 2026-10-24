@@ -198,3 +198,82 @@ export function dedupe(pts: Vec[], tol = 1e-4): Vec[] {
   for (const p of pts) if (!out.some((o) => dist(o, p) < tol)) out.push(p);
   return out;
 }
+
+function refineCubic(c: Extract<Prim, { kind: 'cubic' }>, lo: number, hi: number, f: (p: Vec) => number, maximize = false): number {
+  // 三分探索で区間内の極値を求める
+  for (let k = 0; k < 50; k++) {
+    const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+    const f1 = f(cubicAt(c.p0, c.p1, c.p2, c.p3, m1)), f2 = f(cubicAt(c.p0, c.p1, c.p2, c.p3, m2));
+    if (maximize ? f1 > f2 : f1 < f2) hi = m2;
+    else lo = m1;
+  }
+  return (lo + hi) / 2;
+}
+
+/** 要素上で p に最も近い点 */
+export function closestOnPrim(p: Vec, pr: Prim): Vec {
+  if (pr.kind === 'line') {
+    const ab = sub(pr.b, pr.a);
+    const l2 = dot(ab, ab);
+    if (l2 === 0) return pr.a;
+    return add(pr.a, mul(ab, Math.max(0, Math.min(1, dot(sub(p, pr.a), ab) / l2))));
+  }
+  if (pr.kind === 'circle') {
+    const d = sub(p, pr.c);
+    const l = len(d);
+    return l < 1e-12 ? { x: pr.c.x + pr.r, y: pr.c.y } : add(pr.c, mul(d, pr.r / l));
+  }
+  const N = 48;
+  let bestT = 0, bestD = Infinity;
+  for (let i = 0; i <= N; i++) {
+    const d = dist(p, cubicAt(pr.p0, pr.p1, pr.p2, pr.p3, i / N));
+    if (d < bestD) { bestD = d; bestT = i / N; }
+  }
+  const t = refineCubic(pr, Math.max(0, bestT - 1 / N), Math.min(1, bestT + 1 / N), (q) => dist(p, q));
+  return cubicAt(pr.p0, pr.p1, pr.p2, pr.p3, t);
+}
+
+/**
+ * 点 r から要素へ下ろした垂線の足（距離が極小・極大になる点）。
+ * 円なら r を中心とする円がその要素に接する点になる。
+ */
+export function perpendicularFeet(r: Vec, pr: Prim): Vec[] {
+  if (pr.kind === 'line') {
+    const ab = sub(pr.b, pr.a);
+    const l2 = dot(ab, ab);
+    if (l2 === 0) return [];
+    const t = dot(sub(r, pr.a), ab) / l2;
+    return t >= -1e-9 && t <= 1 + 1e-9 ? [add(pr.a, mul(ab, t))] : [];
+  }
+  if (pr.kind === 'circle') {
+    const d = sub(r, pr.c);
+    const l = len(d);
+    if (l < 1e-9) return [];
+    const u = mul(d, pr.r / l);
+    return [add(pr.c, u), sub(pr.c, u)];
+  }
+  const N = 96;
+  const f = (q: Vec) => dist(r, q);
+  const ds: number[] = [];
+  for (let i = 0; i <= N; i++) ds.push(f(cubicAt(pr.p0, pr.p1, pr.p2, pr.p3, i / N)));
+  const out: Vec[] = [];
+  for (let i = 1; i < N; i++) {
+    const isMin = ds[i] <= ds[i - 1] && ds[i] <= ds[i + 1];
+    const isMax = ds[i] >= ds[i - 1] && ds[i] >= ds[i + 1];
+    if (!isMin && !isMax) continue;
+    const t = refineCubic(pr, (i - 1) / N, (i + 1) / N, f, isMax && !isMin);
+    out.push(cubicAt(pr.p0, pr.p1, pr.p2, pr.p3, t));
+  }
+  return dedupe(out, 1e-6);
+}
+
+/** 3点を通る円の中心（一直線上なら null） */
+export function circumcenter(a: Vec, b: Vec, c: Vec): Vec | null {
+  const d = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+  if (Math.abs(d) < 1e-9) return null;
+  const a2 = dot(a, a), b2 = dot(b, b), c2 = dot(c, c);
+  return {
+    x: (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
+    y: (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d,
+  };
+}

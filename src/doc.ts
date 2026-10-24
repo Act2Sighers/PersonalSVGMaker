@@ -1,5 +1,5 @@
-import type { CircleShape, Doc, Layer, PathShape, PointRef, Shape, Vec } from './types';
-import { add, dist, sub, type Prim } from './geom';
+import type { Doc, Layer, PathNode, PathShape, PointRef, Shape, Vec } from './types';
+import { add, sub, type Prim } from './geom';
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
@@ -41,22 +41,15 @@ export function parseRef(r: PointRef): [string, string] {
   return [r.slice(0, i), r.slice(i + 1)];
 }
 
-export function circleQuad(s: CircleShape, q: number): Vec {
-  const a = (q * Math.PI) / 2;
-  return { x: s.cx + Math.cos(a) * s.r, y: s.cy + Math.sin(a) * s.r };
-}
-
 /** 図形の「掴める点」（ハンドルを除く）のキー */
 export function anchorKeys(s: Shape): string[] {
-  if (s.type === 'circle') return ['c', 'q0', 'q1', 'q2', 'q3'];
+  if (s.type === 'circle') return ['c'];
   return s.nodes.map((_, i) => `n${i}`);
 }
 
 export function getPoint(s: Shape, key: string): Vec | null {
   if (s.type === 'circle') {
-    if (key === 'c') return { x: s.cx, y: s.cy };
-    if (key[0] === 'q') return circleQuad(s, Number(key.slice(1)));
-    return null;
+    return key === 'c' ? { x: s.cx, y: s.cy } : null;
   }
   const i = Number(key.slice(1));
   const n = s.nodes[i];
@@ -91,7 +84,7 @@ export function pathPrims(s: PathShape): Prim[] {
 
 export function shapePrims(s: Shape): Prim[] {
   if (s.type === 'circle') {
-    return [{ kind: 'circle', c: { x: s.cx, y: s.cy }, r: s.r, keys: ['c', 'q0', 'q1', 'q2', 'q3'].map((k) => ref(s.id, k)) }];
+    return [{ kind: 'circle', c: { x: s.cx, y: s.cy }, r: s.r, keys: [ref(s.id, 'c')] }];
   }
   return pathPrims(s);
 }
@@ -111,12 +104,6 @@ export function translatePoints(doc: Doc, sel: Set<PointRef>, delta: Vec) {
       if (keys.has('c')) {
         s.cx += delta.x;
         s.cy += delta.y;
-      } else {
-        const q = [...keys].find((k) => k[0] === 'q');
-        if (q) {
-          const p = add(circleQuad(s, Number(q.slice(1))), delta);
-          s.r = Math.max(0.01, dist(p, { x: s.cx, y: s.cy }));
-        }
       }
       continue;
     }
@@ -134,7 +121,7 @@ export function translatePoints(doc: Doc, sel: Set<PointRef>, delta: Vec) {
   }
 }
 
-/** 選択点を削除。パスは頂点を取り除き、2点未満になれば図形ごと消す。円は点が1つでも選ばれていれば消す。 */
+/** 選択点を削除。パスは頂点を取り除き、2点未満になれば図形ごと消す。円は中心が選ばれていれば消す。 */
 export function deletePoints(doc: Doc, sel: Set<PointRef>) {
   for (const l of doc.layers) {
     l.shapes = l.shapes.filter((s) => {
@@ -220,3 +207,26 @@ export function docToLineSvg(doc: Doc): string {
 }
 
 const escapeXml = (s: string) => s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);
+
+/**
+ * 始点 a・通過点 b・終点 c を通る滑らかな曲線（放物線）を、b を頂点とする2区間のパスで返す。
+ * b を頂点にしておくことで、後から通過点も動かせる。
+ */
+export function curveThrough3(a: Vec, b: Vec, c: Vec): PathNode[] | null {
+  const d1 = Math.hypot(b.x - a.x, b.y - a.y), d2 = Math.hypot(c.x - b.x, c.y - b.y);
+  if (d1 < 1e-9 || d2 < 1e-9) return null;
+  const t = d1 / (d1 + d2);
+  const u = 1 - t;
+  // 2次ベジェの制御点 q（t で b を通る）
+  const q = { x: (b.x - u * u * a.x - t * t * c.x) / (2 * t * u), y: (b.y - u * u * a.y - t * t * c.y) / (2 * t * u) };
+  const c1 = { x: a.x + ((q.x - a.x) * 2) / 3, y: a.y + ((q.y - a.y) * 2) / 3 };
+  const c2 = { x: c.x + ((q.x - c.x) * 2) / 3, y: c.y + ((q.y - c.y) * 2) / 3 };
+  const L = (p: Vec, r: Vec) => ({ x: p.x + (r.x - p.x) * t, y: p.y + (r.y - p.y) * t });
+  const p01 = L(a, c1), p12 = L(c1, c2), p23 = L(c2, c);
+  const h1 = L(p01, p12), h2 = L(p12, p23);
+  return [
+    { x: a.x, y: a.y, hin: null, hout: p01 },
+    { x: b.x, y: b.y, hin: h1, hout: h2 },
+    { x: c.x, y: c.y, hin: p23, hout: null },
+  ];
+}

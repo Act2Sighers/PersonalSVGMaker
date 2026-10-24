@@ -30,7 +30,7 @@ export class LineTool implements Tool {
   }
 
   down(s: Vec) {
-    this.picker.begin(s, { extraPrims: this.draftPrims(), extraPoints: this.pts });
+    this.picker.begin(s, { extraPrims: this.draftPrims(), extraPoints: this.pts, ref: this.pts[this.pts.length - 1] });
   }
   move(s: Vec) {
     this.picker.update(s);

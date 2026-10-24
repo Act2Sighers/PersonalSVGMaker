@@ -6,7 +6,7 @@ import { sub } from '../geom';
 import { COLORS, inWorld, strokeShapes } from '../render';
 import { button, PointPicker } from './common';
 
-/** CAD式の移動：基準点 → 移動先 の順にタップする。選択点が1つだけなら、その点のストレッチになる。 */
+/** CAD式の移動：基準点 → 移動先 の順にタップする。一部の点だけを選んでいれば、その点だけが動く（ストレッチ）。 */
 export class MoveTool implements Tool {
   id = 'move' as const;
   private base: Vec | null = null;
@@ -24,8 +24,8 @@ export class MoveTool implements Tool {
 
   down(s: Vec) {
     if (!this.app.sel.size) return;
-    // 基準点は選択中の点にも吸着させる。移動先では動かす点を対象外にする。
-    this.picker.begin(s, this.base ? { exclude: this.app.sel } : {});
+    // 移動先は、動かす図形自身の端点や交点（移動前の位置）にも吸着する
+    this.picker.begin(s, { ref: this.base });
   }
   move(s: Vec) {
     this.picker.update(s);

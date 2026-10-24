@@ -1,82 +1,100 @@
-import type { Doc, PointRef, Settings, Vec } from './types';
-import { allShapes, anchorKeys, getPoint, ref, shapePrims } from './doc';
-import { dedupe, dist, distToPrim, intersect, lineLineInfinite, projectToLine, type Prim } from './geom';
+import type { Doc, Settings, Vec } from './types';
+import { allShapes, anchorKeys, getPoint, shapePrims } from './doc';
+import { closestOnPrim, dedupe, dist, intersect, lineLineInfinite, perpendicularFeet, projectToLine, type Prim } from './geom';
 
-export type SnapKind = 'point' | 'intersection' | 'extension' | 'grid' | 'free';
+export type SnapKind = 'point' | 'intersection' | 'perp' | 'online' | 'extension' | 'grid' | 'free';
 
 export interface SnapResult {
   p: Vec;
   kind: SnapKind;
-  /** 延長線スナップのとき表示する補助線 */
+  /** 延長線や垂線のとき表示する補助線 */
   guides: { a: Vec; b: Vec }[];
 }
 
 export const SNAP_LABEL: Record<SnapKind, string> = {
   point: '端点',
   intersection: '交点',
+  perp: '垂線・接点',
+  online: '線上',
   extension: '延長線',
   grid: 'グリッド',
   free: '',
 };
 
 export interface SnapOptions {
-  /** スナップ対象から外す点（動かしている最中の点など） */
-  exclude?: Set<PointRef>;
   /** 作図中の線など、doc にまだ入っていない要素 */
   extraPrims?: Prim[];
   extraPoints?: Vec[];
+  /** 直前に置いた点。ここから各線へ下ろした垂線の足（円なら接点）に吸着する */
+  ref?: Vec | null;
 }
 
 /** ジェスチャー開始時に1回作り、指の移動中はこれを使い回す */
 export class SnapContext {
   points: Vec[] = [];
   intersections: Vec[] = [];
+  feet: Vec[] = [];
   lines: { a: Vec; b: Vec }[] = [];
-  prims: Prim[];
+  prims: Prim[] = [];
+  private ref: Vec | null;
 
   constructor(private doc: Doc, private settings: Settings, opts: SnapOptions = {}) {
-    const ex = opts.exclude ?? new Set<PointRef>();
-    const prims: Prim[] = [];
     for (const s of allShapes(doc)) {
       for (const k of anchorKeys(s)) {
-        if (ex.has(ref(s.id, k))) continue;
         const p = getPoint(s, k);
         if (p) this.points.push(p);
       }
-      for (const pr of shapePrims(s)) if (!pr.keys.some((k) => ex.has(k))) prims.push(pr);
+      this.prims.push(...shapePrims(s));
     }
-    prims.push(...(opts.extraPrims ?? []));
+    this.prims.push(...(opts.extraPrims ?? []));
     this.points.push(...(opts.extraPoints ?? []));
+    this.ref = opts.ref ?? null;
 
     if (settings.snapIntersections) {
       const pts: Vec[] = [];
-      for (let i = 0; i < prims.length; i++)
-        for (let j = i + 1; j < prims.length; j++) pts.push(...intersect(prims[i], prims[j]));
+      for (let i = 0; i < this.prims.length; i++)
+        for (let j = i + 1; j < this.prims.length; j++) pts.push(...intersect(this.prims[i], this.prims[j]));
       // 端点と同じ位置の交点（隣り合う線分のつなぎ目）は端点として扱う
       this.intersections = dedupe(pts).filter((p) => !this.points.some((q) => dist(p, q) < 1e-4));
     }
-    for (const pr of prims) if (pr.kind === 'line' && dist(pr.a, pr.b) > 1e-6) this.lines.push({ a: pr.a, b: pr.b });
-    this.prims = prims;
+    if (settings.snapPerp && this.ref) {
+      const r = this.ref;
+      this.feet = dedupe(this.prims.flatMap((pr) => perpendicularFeet(r, pr))).filter((p) => dist(p, r) > 1e-6);
+    }
+    for (const pr of this.prims) if (pr.kind === 'line' && dist(pr.a, pr.b) > 1e-6) this.lines.push({ a: pr.a, b: pr.b });
   }
 
   snap(w: Vec, tol: number): SnapResult {
     const st = this.settings;
-    let best: SnapResult | null = null;
+    let best = null as SnapResult | null;
     let bestD = tol;
-    if (st.snapPoints)
-      for (const p of this.points) {
-        const d = dist(p, w) * 0.85; // 端点を少し優先
-        if (d < bestD) { bestD = d; best = { p, kind: 'point', guides: [] }; }
-      }
-    for (const p of this.intersections) {
-      const d = dist(p, w);
-      if (d < bestD) { bestD = d; best = { p, kind: 'intersection', guides: [] }; }
-    }
+    const consider = (p: Vec, kind: SnapKind, weight: number, guides: SnapResult['guides'] = []) => {
+      const d = dist(p, w) * weight;
+      if (d < bestD) { bestD = d; best = { p, kind, guides }; }
+    };
+    if (st.snapPoints) for (const p of this.points) consider(p, 'point', 0.85); // 端点を少し優先
+    for (const p of this.intersections) consider(p, 'intersection', 1);
+    if (this.ref) for (const p of this.feet) consider(p, 'perp', 0.95, [{ a: this.ref, b: p }]);
     if (best) return best;
 
-    // 延長線はグリッドより明らかに近いときだけ優先する（密なグリッドで線に吸われ過ぎないように）
+    // 線上・延長線はグリッドより明らかに近いときだけ優先する（密なグリッドで線に吸われ過ぎないように）
     const gp = st.snapGrid ? this.gridPoint(w) : null;
     const dg = gp ? dist(gp, w) : Infinity;
+
+    if (st.snapOnLine) {
+      let near: { p: Vec; pr: Prim; d: number } | null = null;
+      for (const pr of this.prims) {
+        const p = closestOnPrim(w, pr);
+        const d = dist(p, w);
+        if (d < tol * 0.6 && (!near || d < near.d)) near = { p, pr, d };
+      }
+      if (near) {
+        // グリッド点がちょうどその線の上にあれば、そちらを使う
+        if (gp && dg < tol && dist(closestOnPrim(gp, near.pr), gp) < 1e-6) return { p: gp, kind: 'online', guides: [] };
+        return { p: near.p, kind: 'online', guides: [] };
+      }
+    }
+
     if (st.snapExtensions) {
       const near = this.lines
         .map((l) => ({ l, d: dist(projectToLine(w, l.a, l.b), w) }))
@@ -92,21 +110,15 @@ export class SnapContext {
       }
       if (near.length >= 1 && near[0].d * 2 < dg) {
         const l = near[0].l;
-        return { p: projectToLine(w, l.a, l.b), kind: 'extension', guides: [guide(l, projectToLine(w, l.a, l.b))] };
+        const p = projectToLine(w, l.a, l.b);
+        return { p, kind: 'extension', guides: [guide(l, p)] };
       }
       // グリッド点がちょうど延長線上にあれば補助線も表示
-      if (gp && near.some((n) => dist(projectToLine(gp, n.l.a, n.l.b), gp) < 1e-6)) {
-        const l = near.find((n) => dist(projectToLine(gp, n.l.a, n.l.b), gp) < 1e-6)!.l;
-        return { p: gp, kind: 'extension', guides: [guide(l, gp)] };
-      }
+      const on = gp && near.find((n) => dist(projectToLine(gp, n.l.a, n.l.b), gp) < 1e-6);
+      if (gp && on) return { p: gp, kind: 'extension', guides: [guide(on.l, gp)] };
     }
     if (gp) return { p: gp, kind: 'grid', guides: [] };
     return { p: w, kind: 'free', guides: [] };
-  }
-
-  /** 線（図形）上にあるか（ヒットテスト用） */
-  nearPrim(w: Vec, tol: number) {
-    return this.prims.some((p) => distToPrim(w, p) < tol);
   }
 
   gridPoint(w: Vec): Vec {

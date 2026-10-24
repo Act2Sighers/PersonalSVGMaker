@@ -72,6 +72,8 @@ export const defaultSettings: Settings = {
   snapGrid: true,
   snapPoints: true,
   snapIntersections: true,
+  snapOnLine: true,
+  snapPerp: true,
   snapExtensions: true,
   loupe: true,
 };

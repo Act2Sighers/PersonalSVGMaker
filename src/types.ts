@@ -62,6 +62,8 @@ export interface Settings {
   snapGrid: boolean;
   snapPoints: boolean;
   snapIntersections: boolean;
+  snapOnLine: boolean;
+  snapPerp: boolean;
   snapExtensions: boolean;
   loupe: boolean;
 }
@@ -69,6 +71,6 @@ export interface Settings {
 /**
  * 点の参照キー: `${shapeId}:${key}`
  *  - パス: n{i}=頂点, i{i}=入りハンドル, o{i}=出ハンドル
- *  - 円:   c=中心, q0..q3=右/下/左/上の四分点
+ *  - 円:   c=中心
  */
 export type PointRef = string;
