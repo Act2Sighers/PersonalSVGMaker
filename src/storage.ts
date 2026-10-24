@@ -1,18 +1,24 @@
-import type { Doc, Settings } from './types';
+import type { Doc, ProjectFolder, Settings } from './types';
 
-/** IndexedDB に作品を保存する。使えない環境ではメモリ上にだけ持つ。 */
+/** IndexedDB に作品と作品フォルダーを保存する。使えない環境ではメモリ上にだけ持つ。 */
 const DB_NAME = 'personal-svg-maker';
-const STORE = 'projects';
+const PROJECTS = 'projects';
+const FOLDERS = 'folders';
+type StoreName = typeof PROJECTS | typeof FOLDERS;
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
-const memory = new Map<string, Doc>();
+const memory: Record<StoreName, Map<string, unknown>> = { projects: new Map(), folders: new Map() };
 
 function openDb(): Promise<IDBDatabase | null> {
   if (!dbPromise) {
     dbPromise = new Promise((resolve) => {
       try {
-        const req = indexedDB.open(DB_NAME, 1);
-        req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'id' });
+        const req = indexedDB.open(DB_NAME, 2);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(PROJECTS)) db.createObjectStore(PROJECTS, { keyPath: 'id' });
+          if (!db.objectStoreNames.contains(FOLDERS)) db.createObjectStore(FOLDERS, { keyPath: 'id' });
+        };
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => resolve(null);
       } catch {
@@ -23,13 +29,13 @@ function openDb(): Promise<IDBDatabase | null> {
   return dbPromise;
 }
 
-function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T | null> {
+function tx<T>(store: StoreName, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T | null> {
   return openDb().then(
     (db) =>
       new Promise((resolve) => {
         if (!db) return resolve(null);
         try {
-          const req = fn(db.transaction(STORE, mode).objectStore(STORE));
+          const req = fn(db.transaction(store, mode).objectStore(store));
           req.onsuccess = () => resolve(req.result);
           req.onerror = () => resolve(null);
         } catch {
@@ -39,23 +45,32 @@ function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T
   );
 }
 
-export async function saveProject(doc: Doc) {
-  memory.set(doc.id, structuredClone(doc));
-  await tx('readwrite', (s) => s.put(doc));
+async function put<T extends { id: string }>(store: StoreName, v: T) {
+  memory[store].set(v.id, structuredClone(v));
+  await tx(store, 'readwrite', (s) => s.put(v));
+}
+async function get<T>(store: StoreName, id: string): Promise<T | null> {
+  return (await tx<T>(store, 'readonly', (s) => s.get(id))) ?? (memory[store].get(id) as T | undefined) ?? null;
+}
+async function del(store: StoreName, id: string) {
+  memory[store].delete(id);
+  await tx(store, 'readwrite', (s) => s.delete(id));
+}
+async function all<T>(store: StoreName): Promise<T[]> {
+  return (await tx<T[]>(store, 'readonly', (s) => s.getAll())) ?? ([...memory[store].values()] as T[]);
 }
 
-export async function loadProject(id: string): Promise<Doc | null> {
-  return (await tx<Doc>('readonly', (s) => s.get(id))) ?? memory.get(id) ?? null;
-}
-
-export async function deleteProject(id: string) {
-  memory.delete(id);
-  await tx('readwrite', (s) => s.delete(id));
-}
-
+export const saveProject = (doc: Doc) => put(PROJECTS, doc);
+export const loadProject = (id: string) => get<Doc>(PROJECTS, id);
+export const deleteProject = (id: string) => del(PROJECTS, id);
 export async function listProjects(): Promise<Doc[]> {
-  const all = (await tx<Doc[]>('readonly', (s) => s.getAll())) ?? [...memory.values()];
-  return all.sort((a, b) => b.updatedAt - a.updatedAt);
+  return (await all<Doc>(PROJECTS)).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export const saveFolder = (f: ProjectFolder) => put(FOLDERS, f);
+export const deleteFolder = (id: string) => del(FOLDERS, id);
+export async function listFolders(): Promise<ProjectFolder[]> {
+  return (await all<ProjectFolder>(FOLDERS)).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 }
 
 const LAST_KEY = 'psm:lastProject';

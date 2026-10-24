@@ -90,8 +90,18 @@ export interface Doc {
   layers: LayerNode[];
   /** 描画先のレイヤー（またはレイヤー一覧で選んでいるフォルダー） */
   activeId: string;
+  /** 作品一覧でのフォルダー（なければ一番上） */
+  folderId?: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** 作品一覧のフォルダー（作品の中のレイヤーフォルダーとは別） */
+export interface ProjectFolder {
+  id: string;
+  name: string;
+  parentId: string | null;
+  createdAt: number;
 }
 
 /** アプリ全体の設定（作品ごとではない） */

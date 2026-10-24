@@ -50,3 +50,18 @@ export function askConfirm(message: string, okLabel: string): Promise<boolean> {
   });
 }
 
+
+/** お知らせ（alert の代わり） */
+export function showInfo(message: string): Promise<void> {
+  return new Promise((resolve) => {
+    const bg = el('div', 'modal-bg top');
+    const box = el('div', 'modal small');
+    const btns = el('div', 'modal-actions end');
+    const ok = el('button', 'opt-btn active', 'OK');
+    btns.append(ok);
+    box.append(el('p', '', escapeHtml(message)), btns);
+    bg.append(box);
+    document.body.append(bg);
+    ok.addEventListener('click', () => { bg.remove(); resolve(); });
+  });
+}
