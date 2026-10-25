@@ -4,6 +4,8 @@ import { cloneDoc, findNode, layerEntries, pruneSelection } from './doc';
 import { askConfirm, askText, el, escapeHtml } from './dialogs';
 import { addFolder, addLayer, moveIntoFolderAbove, moveOutOfFolder, moveShapesToLayer, removeNode, shiftNode } from './layers';
 import { selectedShapeIds } from './clipboard';
+import { strokeLayer, type JoinStyle } from './outline';
+import { joinColor, splitColor } from './color';
 
 const EYE = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/></svg>';
 const EYE_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3l18 18M10.6 6.1A10.7 10.7 0 0112 6c6.5 0 10 6 10 6a17 17 0 01-3.2 3.8M6.2 7.6A17 17 0 002 12s3.5 6 10 6c1.5 0 2.9-.3 4.1-.8"/></svg>';
@@ -82,6 +84,12 @@ export function buildLayersPanel(panel: HTMLElement, app: App): () => void {
     app.setStatus(`${ids.size}個の図形を「${target.layer.name}」へ移しました`);
     app.refreshUI();
   };
+  act('線を生成', '選んでいるレイヤーの線を、太さを持った色付きの線に置き換えたレイヤーを、すぐ上に作ります', () => {
+    const at = findNode(app.doc, activeId());
+    if (!at || at.node.kind !== 'layer') return app.setStatus('線を生成するレイヤーを選んでください');
+    if (!at.node.shapes.length) return app.setStatus(`「${at.node.name}」には線がありません`);
+    strokeDialog(app, at.node.id);
+  });
   const del = act('削除', '', async () => {
     const at = findNode(app.doc, activeId());
     if (!at) return;
@@ -147,4 +155,69 @@ export function buildLayersPanel(panel: HTMLElement, app: App): () => void {
     moveTo.classList.toggle('active', choosingTarget);
     list.classList.toggle('choosing', choosingTarget);
   };
+}
+
+const STROKE_KEY = 'psm:strokeOptions';
+
+/** 線の生成の設定画面：太さ・角と端の処理・色（不透明度込み） */
+function strokeDialog(app: App, layerId: string) {
+  let saved = { width: 4, style: 'round' as JoinStyle, color: '#000000' };
+  try { saved = { ...saved, ...JSON.parse(localStorage.getItem(STROKE_KEY) ?? '{}') }; } catch { /* 保存できない環境 */ }
+  const bg = el('div', 'modal-bg top');
+  const box = el('form', 'modal small');
+  const field = (label: string, input: HTMLElement) => {
+    const r = el('label', 'row');
+    r.append(el('span', '', label), input);
+    return r;
+  };
+  const width = el('input', 'num-input');
+  width.type = 'number'; width.inputMode = 'decimal'; width.min = '0.1'; width.step = 'any'; width.id = 'stroke-width';
+  width.value = String(saved.width);
+  const style = el('select', 'select-input');
+  style.id = 'stroke-style';
+  for (const [v, t] of [['round', '丸み'], ['sharp', 'シャープ']]) { const o = el('option', '', t); o.value = v; style.append(o); }
+  style.value = saved.style;
+  const { hex, alpha } = splitColor(saved.color);
+  const color = el('input');
+  color.type = 'color'; color.id = 'stroke-color'; color.value = hex;
+  const op = el('input', 'alpha-input');
+  op.type = 'number'; op.min = '0'; op.max = '100'; op.step = 'any'; op.id = 'stroke-opacity';
+  op.value = String(Math.round(alpha * 100));
+  const colorWrap = el('span', 'tl-inline');
+  colorWrap.append(color, op, el('span', '', '%'));
+  const btns = el('div', 'modal-actions end');
+  const cancel = el('button', 'opt-btn', 'キャンセル');
+  cancel.type = 'button';
+  const ok = el('button', 'opt-btn active', '生成');
+  ok.type = 'submit';
+  btns.append(cancel, ok);
+  const src = findNode(app.doc, layerId)?.node;
+  box.append(
+    el('h2', '', `「${escapeHtml(src?.name ?? '')}」の線を生成`),
+    field('太さ', width), field('角と端', style), field('色・不透明度', colorWrap),
+    el('p', 'note', '丸み：端は半円、角は丸く。シャープ：端は直角に切り落とし、角はとがらせます（とがった先が太さの4倍より長くなる所は平らに切り落とします）。結果は新しいレイヤーとして、このレイヤーのすぐ上に作ります。元の線を直しても、生成した線は変わりません。'),
+    btns,
+  );
+  bg.append(box);
+  document.body.append(bg);
+  cancel.addEventListener('click', () => bg.remove());
+  box.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const w = Number(width.value);
+    if (!(w > 0)) return;
+    const opts = { width: w, style: style.value as JoinStyle, color: joinColor(color.value, Math.max(0, Math.min(100, Number(op.value) || 0)) / 100) };
+    try { localStorage.setItem(STROKE_KEY, JSON.stringify(opts)); } catch { /* 保存できない環境 */ }
+    bg.remove();
+    const layer = app.doc && findNode(app.doc, layerId)?.node;
+    if (!layer || layer.kind !== 'layer') return;
+    const made = strokeLayer(layer, opts);
+    if (!made) return app.setStatus('線を生成できませんでした');
+    app.mutate((d) => {
+      const at = findNode(d, layerId);
+      if (!at) return;
+      at.siblings.splice(at.index + 1, 0, made);
+      d.activeId = made.id;
+    });
+    app.setStatus(`「${made.name}」を作りました`);
+  });
 }
