@@ -11,6 +11,8 @@ const EYE = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke=
 const EYE_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3l18 18M10.6 6.1A10.7 10.7 0 0112 6c6.5 0 10 6 10 6a17 17 0 01-3.2 3.8M6.2 7.6A17 17 0 002 12s3.5 6 10 6c1.5 0 2.9-.3 4.1-.8"/></svg>';
 const LOCK = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>';
 const UNLOCK = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" opacity="0.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 017.5-2"/></svg>';
+const LINES = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 19L19 5"/><rect x="3" y="17" width="4" height="4" fill="currentColor" stroke="none"/><rect x="17" y="3" width="4" height="4" fill="currentColor" stroke="none"/></svg>';
+const LINES_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 19L19 5" opacity="0.35" stroke-dasharray="2 3"/><path d="M5 5l14 14"/></svg>';
 const FOLDER = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" opacity="0.8"><path d="M3 6a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>';
 
 /** レイヤー一覧（右側に重ねて表示する）。返り値は表示を更新する関数。 */
@@ -112,6 +114,11 @@ export function buildLayersPanel(panel: HTMLElement, app: App): () => void {
     r.append(
       toggle(n.visible ? EYE : EYE_OFF, n.visible ? '非表示にする' : '表示する', () => edit((x) => (x.visible = !x.visible))),
       toggle(n.locked ? LOCK : UNLOCK, n.locked ? 'ロックを外す' : 'ロックする', () => edit((x) => (x.locked = !x.locked))),
+      toggle(n.hideLines ? LINES_OFF : LINES, n.hideLines ? '線を表示する' : '線を隠す（塗りだけ表示）', () =>
+        edit((x) => {
+          if (x.hideLines) delete x.hideLines;
+          else x.hideLines = true;
+        })),
     );
     if (n.kind === 'folder') {
       r.append(toggle(n.open ? '▾' : '▸', n.open ? '閉じる' : '開く', () => {

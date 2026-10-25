@@ -5,7 +5,7 @@ import { layerFaces } from './fills';
 import { faceAt, traceFace, type Face } from './regions';
 import { nodeStates, type NodeState, type Pose } from './anim';
 import { currentFrame, getImage } from './underlay';
-import { allShapes, anchorKeys, selectableShapes, getPoint, ref, shapePrims } from './doc';
+import { allShapes, anchorKeys, layerEntries, selectableShapes, getPoint, ref, shapePrims } from './doc';
 import type { Prim } from './geom';
 import type { SnapResult } from './snap';
 
@@ -210,10 +210,10 @@ function drawTree(ctx: CanvasRenderingContext2D, view: View, nodes: LayerNode[],
     const own = Math.max(0, Math.min(1, (n.opacity ?? 1) * (poses.get(n.id)?.opacity ?? 1)));
     if (own <= 0) continue;
     if (n.kind === 'folder') {
-      if (own >= 0.999) { drawTree(ctx, view, n.children, poses, states, lines, o, depth); continue; }
+      if (own >= 0.999) { drawTree(ctx, view, n.children, poses, states, lines && !n.hideLines, o, depth); continue; }
       const off = offscreen(depth, o);
       off.setTransform(ctx.getTransform());
-      drawTree(off, view, n.children, poses, states, lines, o, depth + 1);
+      drawTree(off, view, n.children, poses, states, lines && !n.hideLines, o, depth + 1);
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalAlpha = own;
@@ -226,7 +226,7 @@ function drawTree(ctx: CanvasRenderingContext2D, view: View, nodes: LayerNode[],
     if (st) ctx.transform(st.m.a, st.m.b, st.m.c, st.m.d, st.m.e, st.m.f);
     ctx.globalAlpha = own;
     drawFills(ctx, n);
-    if (lines) strokeShapes(ctx, view, n.shapes, COLORS.line);
+    if (lines && !n.hideLines) strokeShapes(ctx, view, n.shapes, COLORS.line);
     ctx.restore();
   }
 }
@@ -286,7 +286,11 @@ export function drawScene(ctx: CanvasRenderingContext2D, app: App, view: View, o
   const shapes = allShapes(app.doc);
   const sel = app.sel;
   const fullySelected = (s: Shape) => anchorKeys(s).every((k) => sel.has(ref(s.id, k)));
-  if (app.settings.showLines) strokeShapes(ctx, view, shapes.filter((s) => !fullySelected(s)), COLORS.line);
+  // 線を隠したレイヤー・フォルダーの線は描かない（選んでいる線は、編集のため表示する）
+  if (app.settings.showLines) {
+    const shown = layerEntries(app.doc).filter((e) => e.visible && e.lines).flatMap((e) => e.layer.shapes);
+    strokeShapes(ctx, view, shown.filter((s) => !fullySelected(s)), COLORS.line);
+  }
   strokeShapes(ctx, view, shapes.filter(fullySelected), COLORS.lineSel, 2);
 
   screenTransform(ctx, dpr);

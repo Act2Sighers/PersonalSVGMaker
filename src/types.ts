@@ -58,6 +58,8 @@ export interface Layer {
   pivot?: Vec;
   /** 不透明度（0〜1、なければ 1） */
   opacity?: number;
+  /** 線（ベクター線）を表示しない（塗りだけの見た目にする） */
+  hideLines?: boolean;
 }
 
 export interface Folder {
@@ -72,6 +74,8 @@ export interface Folder {
   pivot?: Vec;
   /** 不透明度（0〜1、なければ 1）。中身をまとめて描いてから薄くする */
   opacity?: number;
+  /** 中身の線を表示しない */
+  hideLines?: boolean;
 }
 
 /** 下書き画像の置き場所（画像そのものは作品とは別に保存する） */

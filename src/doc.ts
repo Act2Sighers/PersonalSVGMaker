@@ -72,20 +72,22 @@ export interface LayerEntry {
   /** フォルダーの表示・ロックも反映した状態 */
   visible: boolean;
   locked: boolean;
+  /** フォルダーも含めて、線を表示するか */
+  lines: boolean;
   depth: number;
 }
 
 /** 描画順（下から上）にレイヤーを並べる */
 export function layerEntries(doc: Doc): LayerEntry[] {
   const out: LayerEntry[] = [];
-  const walk = (nodes: LayerNode[], visible: boolean, locked: boolean, depth: number) => {
+  const walk = (nodes: LayerNode[], visible: boolean, locked: boolean, lines: boolean, depth: number) => {
     for (const n of nodes) {
-      const v = visible && n.visible, k = locked || n.locked;
-      if (n.kind === 'folder') walk(n.children, v, k, depth + 1);
-      else out.push({ layer: n, visible: v, locked: k, depth });
+      const v = visible && n.visible, k = locked || n.locked, l = lines && !n.hideLines;
+      if (n.kind === 'folder') walk(n.children, v, k, l, depth + 1);
+      else out.push({ layer: n, visible: v, locked: k, lines: l, depth });
     }
   };
-  walk(doc.layers, true, false, 0);
+  walk(doc.layers, true, false, true, 0);
   return out;
 }
 
