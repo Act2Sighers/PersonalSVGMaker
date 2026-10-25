@@ -290,7 +290,7 @@ function buildSettingsPanel(panel: HTMLElement, app: App): () => void {
 
   const v = section('表示');
   check(v, 'ルーペ（指の下を拡大）', () => app.settings.loupe, setSetting('loupe'));
-  check(v, '線を表示', () => app.settings.showLines, setSetting('showLines'));
+  check(v, '線を表示（作品全体）', () => app.settings.showLines, setSetting('showLines'));
 
   return () => syncs.forEach((f) => f());
 }
