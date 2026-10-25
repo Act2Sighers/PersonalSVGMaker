@@ -47,7 +47,7 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
   const redoBtn = iconButton(ICONS.redo, 'やり直し', () => app.redo());
   const penBtn = iconButton(ICONS.pen, 'ペン', () => app.setMode('pen'), 'icon-btn mode');
   const handBtn = iconButton(ICONS.hand, 'ハンド', () => app.setMode('hand'), 'icon-btn mode');
-  const fitBtn = iconButton(ICONS.fit, '全体表示', () => fitView());
+  const fitBtn = iconButton(ICONS.fit, '全体表示（回転も戻す）', () => fitView());
   const exportBtn = iconButton(ICONS.export, '書き出し', () => openExport(app));
   const zoomLabel = el('span', 'zoom-label');
   const togglePanel = (p: HTMLElement) => {
@@ -117,7 +117,8 @@ export function buildUI(root: HTMLElement, app: App): UIRefs {
     redoBtn.disabled = !app.history.canRedo;
     penBtn.classList.toggle('active', app.mode === 'pen');
     handBtn.classList.toggle('active', app.mode === 'hand');
-    zoomLabel.textContent = `${Math.round(app.view.zoom * 100)}%`;
+    const deg = Math.round((app.view.rot * 180) / Math.PI);
+    zoomLabel.textContent = `${Math.round(app.view.zoom * 100)}%${deg ? ` ${deg}°` : ''}`;
     for (const [id, b] of toolBtns) {
       b.classList.toggle('active', id === app.toolId);
       // アニメーション中は作図ツールを使わない（形を変えるときはアニメを終える）

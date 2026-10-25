@@ -30,13 +30,14 @@ export const COLORS = {
 
 /** ワールド座標で描くための変換を設定 */
 export function worldTransform(ctx: CanvasRenderingContext2D, view: View, dpr: number) {
-  ctx.setTransform(dpr * view.zoom, 0, 0, dpr * view.zoom, dpr * view.panX, dpr * view.panY);
+  const [a, b, c, d, e, f] = view.matrix();
+  ctx.setTransform(dpr * a, dpr * b, dpr * c, dpr * d, dpr * e, dpr * f);
 }
 
 /** 画面座標系の上にワールド座標系を重ねて fn を実行（ツールの重ね描き用） */
 export function inWorld(ctx: CanvasRenderingContext2D, view: View, fn: () => void) {
   ctx.save();
-  ctx.transform(view.zoom, 0, 0, view.zoom, view.panX, view.panY);
+  ctx.transform(...view.matrix());
   fn();
   ctx.restore();
 }
@@ -68,7 +69,10 @@ export function strokeShapes(ctx: CanvasRenderingContext2D, view: View, shapes: 
 function drawGrid(ctx: CanvasRenderingContext2D, app: App, view: View, w: number, h: number) {
   const g = app.doc.grid;
   if (!g.visible || g.spacing <= 0) return;
-  const tl = view.toWorld({ x: 0, y: 0 }), br = view.toWorld({ x: w, y: h });
+  // 画面が回っていてもよいように、画面の四隅を含むワールドの範囲を求める
+  const cs = [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: 0, y: h }, { x: w, y: h }].map((p) => view.toWorld(p));
+  const tl = { x: Math.min(...cs.map((p) => p.x)), y: Math.min(...cs.map((p) => p.y)) };
+  const br = { x: Math.max(...cs.map((p) => p.x)), y: Math.max(...cs.map((p) => p.y)) };
   const minorPx = g.spacing * view.zoom;
   const majorPx = minorPx * Math.max(1, g.majorEvery);
   if (majorPx < 6) return;
@@ -323,11 +327,18 @@ export function drawScene(ctx: CanvasRenderingContext2D, app: App, view: View, o
     const o = view.toScreen({ x: mirror.x, y: mirror.y });
     ctx.save();
     ctx.globalAlpha = 0.45;
-    if (mirror.axis === 'vertical') ctx.setTransform(-dpr, 0, 0, dpr, 2 * o.x * dpr, 0);
-    else ctx.setTransform(dpr, 0, 0, -dpr, 0, 2 * o.y * dpr);
+    // 画面上で、軸の向き u の線について折り返す
+    const u = mirrorDir(view, mirror.axis);
+    const ra = 2 * u.x * u.x - 1, rb = 2 * u.x * u.y, rd = 2 * u.y * u.y - 1;
+    ctx.setTransform(dpr * ra, dpr * rb, dpr * rb, dpr * rd, dpr * (o.x - ra * o.x - rb * o.y), dpr * (o.y - rb * o.x - rd * o.y));
     app.tool.overlay(ctx, view);
     ctx.restore();
   }
+}
+
+/** ミラーの軸が画面で向いている向き */
+function mirrorDir(view: View, axis: 'vertical' | 'horizontal'): Vec {
+  return view.dirToScreen(axis === 'vertical' ? { x: 0, y: 1 } : { x: 1, y: 0 });
 }
 
 function drawMirrorAxis(ctx: CanvasRenderingContext2D, app: App, view: View, w: number, h: number) {
@@ -339,8 +350,9 @@ function drawMirrorAxis(ctx: CanvasRenderingContext2D, app: App, view: View, w: 
   ctx.lineWidth = 1.5;
   ctx.setLineDash([10, 4, 2, 4]);
   ctx.beginPath();
-  if (m.axis === 'vertical') { ctx.moveTo(o.x, 0); ctx.lineTo(o.x, h); }
-  else { ctx.moveTo(0, o.y); ctx.lineTo(w, o.y); }
+  const u = mirrorDir(view, m.axis), l = w + h;
+  ctx.moveTo(o.x - u.x * l, o.y - u.y * l);
+  ctx.lineTo(o.x + u.x * l, o.y + u.y * l);
   ctx.stroke();
   ctx.restore();
 }

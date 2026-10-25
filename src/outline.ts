@@ -174,10 +174,58 @@ function side(b: Builder, segs: Prim[], off: number, style: JoinStyle, closed: b
   });
 }
 
-function outlinePath(s: PathShape, half: number, style: JoinStyle): Shape[] {
-  const segs = shapePrims(s).filter((p) => p.kind !== 'circle' && dist(startPt(p), endPt(p)) + (p.kind === 'cubic' ? dist(p.p0, p.p1) + dist(p.p2, p.p3) : 0) > 1e-6);
-  if (!segs.length) return [];
-  if (s.closed) {
+/** 長さのない区間を除いた、図形の区間の並び */
+function pathSegs(s: PathShape): Prim[] {
+  return shapePrims(s).filter((p) => p.kind !== 'circle' && dist(startPt(p), endPt(p)) + (p.kind === 'cubic' ? dist(p.p0, p.p1) + dist(p.p2, p.p3) : 0) > 1e-6);
+}
+
+interface Chain {
+  segs: Prim[];
+  closed: boolean;
+}
+
+/**
+ * 端どうしが重なっている開いた線を、ひと続きの線としてつなぐ。
+ * 「一点ずつ」で描いた四角形のように、別々の図形でも端が重なっていれば角として扱う。
+ * 3本以上の端が集まる所ではつながない（それぞれの端の処理になる）。
+ */
+function chainPieces(pieces: Prim[][]): Chain[] {
+  const nodes: Vec[] = [];
+  const nodeOf = (p: Vec) => {
+    let i = nodes.findIndex((q) => dist(p, q) < 1e-4);
+    if (i < 0) { i = nodes.length; nodes.push(p); }
+    return i;
+  };
+  const ends = pieces.map((s) => [nodeOf(startPt(s[0])), nodeOf(endPt(s[s.length - 1]))]);
+  const at: number[][] = nodes.map(() => []);
+  ends.forEach(([a, b], i) => { at[a].push(i); at[b].push(i); });
+  const used = pieces.map(() => false);
+  const out: Chain[] = [];
+  const walk = (i: number, from: number) => {
+    const segs: Prim[] = [];
+    let cur = from;
+    let k: number | undefined = i;
+    while (k !== undefined) {
+      used[k] = true;
+      const [a, b] = ends[k];
+      const fwd = a === cur;
+      segs.push(...(fwd ? pieces[k] : pieces[k].map(reversePrim).reverse()));
+      cur = fwd ? b : a;
+      if (at[cur].length !== 2) break;
+      k = at[cur].find((j) => !used[j]);
+    }
+    out.push({ segs, closed: cur === from && at[from].length === 2 });
+  };
+  // 途切れた端から先にたどり、残りは輪になっている
+  at.forEach((list, n) => {
+    if (list.length !== 2) for (const i of list) if (!used[i]) walk(i, n);
+  });
+  pieces.forEach((_, i) => { if (!used[i]) walk(i, ends[i][0]); });
+  return out;
+}
+
+function outlineChain({ segs, closed }: Chain, half: number, style: JoinStyle): Shape[] {
+  if (closed) {
     // 閉じた線は、外側と内側の2本の輪郭になる
     const out: Shape[] = [];
     for (const off of [half, -half]) {
@@ -213,12 +261,19 @@ export function strokeLayer(src: Layer, opt: StrokeOptions): Layer | null {
   const half = opt.width / 2;
   if (!(half > 0)) return null;
   const shapes: Shape[] = [];
+  const open: Prim[][] = [];
   for (const s of src.shapes) {
     if (s.type === 'circle') {
       shapes.push({ id: uid(), type: 'circle', cx: s.cx, cy: s.cy, r: s.r + half });
       if (s.r - half > 1e-6) shapes.push({ id: uid(), type: 'circle', cx: s.cx, cy: s.cy, r: s.r - half });
-    } else shapes.push(...outlinePath(s, half, opt.style));
+      continue;
+    }
+    const segs = pathSegs(s);
+    if (!segs.length) continue;
+    if (s.closed) shapes.push(...outlineChain({ segs, closed: true }, half, opt.style));
+    else open.push(segs);
   }
+  for (const c of chainPieces(open)) shapes.push(...outlineChain(c, half, opt.style));
   if (!shapes.length) return null;
   const layer = newLayer(`${src.name} の線`);
   layer.shapes = shapes;

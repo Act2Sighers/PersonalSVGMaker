@@ -98,12 +98,12 @@ export class SelectTool implements Tool {
 
   private selectBox(a: Vec, b: Vec) {
     const app = this.app;
-    const wa = app.view.toWorld(a), wb = app.view.toWorld(b);
-    const x0 = Math.min(wa.x, wb.x), x1 = Math.max(wa.x, wb.x), y0 = Math.min(wa.y, wb.y), y1 = Math.max(wa.y, wb.y);
+    // 範囲は画面上の長方形（キャンバスが回っていても見た目どおりに選ぶ）
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
     if (!this.additive) app.sel.clear();
     for (const sh of selectableShapes(app.doc))
       for (const k of anchorKeys(sh)) {
-        const p = getPoint(sh, k)!;
+        const p = app.view.toScreen(getPoint(sh, k)!);
         if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) app.sel.add(ref(sh.id, k));
       }
   }

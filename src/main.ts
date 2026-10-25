@@ -63,8 +63,8 @@ async function start() {
     }
     const lv = new View();
     lv.zoom = app.view.zoom * LOUPE_ZOOM;
-    lv.panX = LOUPE_SIZE / 2 - focus.x * lv.zoom;
-    lv.panY = LOUPE_SIZE / 2 - focus.y * lv.zoom;
+    lv.rot = app.view.rot;
+    lv.pin(focus, { x: LOUPE_SIZE / 2, y: LOUPE_SIZE / 2 });
     drawScene(lctx, app, lv, { dpr, w: LOUPE_SIZE, h: LOUPE_SIZE });
     let x = finger.x - LOUPE_SIZE / 2, y = finger.y - LOUPE_SIZE - 70;
     if (y < 8) y = finger.y + 70;
