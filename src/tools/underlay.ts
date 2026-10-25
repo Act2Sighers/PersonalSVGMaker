@@ -98,11 +98,15 @@ export class UnderlayTool implements Tool {
     const u = this.place();
     if (!u) return;
     const d = this.preview ?? { x: 0, y: 0 };
-    const a = view.toScreen({ x: u.x + d.x, y: u.y + d.y }), b = view.toScreen({ x: u.x + u.w + d.x, y: u.y + u.h + d.y });
+    const x = u.x + d.x, y = u.y + d.y;
+    const cs = [{ x, y }, { x: x + u.w, y }, { x: x + u.w, y: y + u.h }, { x, y: y + u.h }].map((p) => view.toScreen(p));
+    ctx.beginPath();
+    cs.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.closePath();
     ctx.strokeStyle = COLORS.lineSel;
     ctx.lineWidth = 2;
     ctx.setLineDash([8, 5]);
-    ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    ctx.stroke();
     ctx.setLineDash([]);
   }
 

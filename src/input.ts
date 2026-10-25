@@ -1,15 +1,27 @@
 import type { App } from './app';
 import type { Vec } from './types';
 import { dist } from './geom';
+import { normAngle } from './view';
+
+interface Pair {
+  /** 2点の中点 */
+  c: Vec;
+  /** 2点の距離 */
+  d: number;
+  /** 2点を結ぶ向き（ラジアン） */
+  a: number;
+}
 
 const TAP_MS = 350;
 const TAP_MOVE_PX = 12;
+/** 2本指の回転を、0°・90°・180°・270° に吸い寄せる幅 */
+const ROT_SNAP = (4 * Math.PI) / 180;
 
 /**
  * キャンバスの指操作：
  *  - ペン状態: 1本指 = ツール操作
  *  - ハンド状態: 1本指 = キャンバス移動
- *  - どちらでも: 2本指 = 移動・ズーム、2本指タップ = 作図中なら点を1つ取り消し／それ以外は元に戻す、3本指タップ = やり直し
+ *  - どちらでも: 2本指 = 移動・回転・ズーム（2点の位置に合わせる）、2本指タップ = 作図中なら点を1つ取り消し／それ以外は元に戻す、3本指タップ = やり直し
  */
 export function attachInput(canvas: HTMLCanvasElement, app: App) {
   const pts = new Map<number, Vec>();
@@ -18,17 +30,23 @@ export function attachInput(canvas: HTMLCanvasElement, app: App) {
   let startTime = 0;
   let maxCount = 0;
   let moved = false;
-  let last: { c: Vec; d: number } | null = null;
-  let first: { c: Vec; d: number } | null = null;
+  let last: Pair | null = null;
+  let first: Pair | null = null;
+  /** 2本指を置いたときの、キャンバスの回転 */
+  let baseRot = 0;
   let panLast: Vec | null = null;
 
   const pos = (e: PointerEvent): Vec => {
     const r = canvas.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
-  const pair = () => {
+  const pair = (): Pair => {
     const [a, b] = [...pts.values()];
-    return { c: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, d: Math.max(1, dist(a, b)) };
+    return { c: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, d: Math.max(1, dist(a, b)), a: Math.atan2(b.y - a.y, b.x - a.x) };
+  };
+  const beginPair = () => {
+    last = first = pair();
+    baseRot = app.view.rot;
   };
 
   canvas.addEventListener('pointerdown', (e) => {
@@ -56,7 +74,7 @@ export function attachInput(canvas: HTMLCanvasElement, app: App) {
     }
     state = 'multi';
     maxCount = Math.max(maxCount, pts.size);
-    last = first = pair();
+    beginPair();
   });
 
   canvas.addEventListener('pointermove', (e) => {
@@ -76,7 +94,15 @@ export function attachInput(canvas: HTMLCanvasElement, app: App) {
       app.view.panX += cur.c.x - last.c.x;
       app.view.panY += cur.c.y - last.c.y;
       app.view.zoomAt(cur.c, cur.d / last.d);
-      if (first && (dist(cur.c, first.c) > TAP_MOVE_PX || Math.abs(cur.d - first.d) > TAP_MOVE_PX)) moved = true;
+      if (first) {
+        // 置いたときからの回転量で決める（直角の近くでは吸い寄せる）
+        let target = baseRot + normAngle(cur.a - first.a);
+        const q = Math.round(target / (Math.PI / 2)) * (Math.PI / 2);
+        if (Math.abs(target - q) < ROT_SNAP) target = q;
+        app.view.rotateAt(cur.c, normAngle(target - app.view.rot));
+        const arc = Math.abs(normAngle(cur.a - first.a)) * cur.d / 2;
+        if (dist(cur.c, first.c) > TAP_MOVE_PX || Math.abs(cur.d - first.d) > TAP_MOVE_PX || arc > TAP_MOVE_PX) moved = true;
+      }
       last = cur;
       app.requestRender();
       app.onUI();
@@ -95,7 +121,7 @@ export function attachInput(canvas: HTMLCanvasElement, app: App) {
     } else if (state === 'pan') {
       state = 'idle';
     } else if (state === 'multi') {
-      if (pts.size >= 2) last = first = pair();
+      if (pts.size >= 2) beginPair();
       if (pts.size === 0) {
         if (!moved && !cancelled && performance.now() - startTime < TAP_MS) {
           // 作図中なら点を1つ取り消し、そうでなければ元に戻す
