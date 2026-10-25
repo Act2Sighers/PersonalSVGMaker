@@ -367,3 +367,17 @@ export function fitStroke(pts: Vec[], opt: FitOptions): Shape[] {
   const shape = nodesToShape(piecesToNodes(pieces), px);
   return shape ? [shape] : [];
 }
+
+/**
+ * 点列に滑らかにつながる3次ベジェの並びを当てはめる（線の生成で使う）。
+ * t1 は始点の進む向き、t2 は終点から戻る向き（どちらも単位ベクトル）。返り値は [p0, p1, p2, p3] の並び。
+ */
+export function fitCurve(pts: Vec[], t1: Vec, t2: Vec, tol: number): Vec[][] {
+  if (pts.length < 2) return [];
+  if (pts.length < 4) {
+    const a = pts[0], b = pts[pts.length - 1];
+    const l = dist(a, b) / 3;
+    return [[a, add(a, mul(t1, l)), add(b, mul(t2, l)), b]];
+  }
+  return fitCurveRecursive(pts, t1, t2, tol, Math.max(1, Math.floor(pts.length / 8)));
+}

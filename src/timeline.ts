@@ -154,15 +154,16 @@ export function buildTimeline(root: HTMLElement, app: App): () => void {
     const prop = el('select', 'select-input');
     prop.id = 'wiggle-prop';
     for (const p of PROPS.filter((x) => x.id !== 'opacity')) { const o = el('option', '', p.label); o.value = p.id; prop.append(o); }
-    const num = (id: string, v: number, step: string) => {
+    // フォームの中なので、刻みに合わない値でも送信できるように step は any にする
+    const num = (id: string, v: number) => {
       const i = el('input', 'num-input');
-      i.type = 'number'; i.inputMode = 'decimal'; i.id = id; i.step = step; i.value = String(v);
+      i.type = 'number'; i.inputMode = 'decimal'; i.id = id; i.step = 'any'; i.value = String(v);
       return i;
     };
-    const amp = num('wiggle-amp', 3, '0.1');
+    const amp = num('wiggle-amp', 3);
     const ampUnit = el('span', 'opt-label', '°');
-    const period = num('wiggle-period', clip.duration, '0.1');
-    const phase = num('wiggle-phase', 0, '0.05');
+    const period = num('wiggle-period', clip.duration);
+    const phase = num('wiggle-phase', 0);
     const defaults: Record<string, [number, string]> = { rotate: [3, '°'], x: [2, ''], y: [2, ''], scaleX: [0.02, '倍'], scaleY: [0.02, '倍'] };
     prop.addEventListener('change', () => { const [v, u] = defaults[prop.value]; amp.value = String(v); ampUnit.textContent = u; });
     const ampWrap = el('span', 'tl-inline');
