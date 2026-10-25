@@ -119,6 +119,15 @@ export class FillTool implements Tool {
     }
     app.refreshUI();
   }
+  /** 2本指タップ：グラデーションの始点、選んだ範囲の順に取り消す */
+  stepBack() {
+    if (this.start) this.start = null;
+    else if (this.target) this.target = null;
+    else return false;
+    this.app.refreshUI();
+    return true;
+  }
+
   cancelGesture() {
     this.hover = null;
     this.picker.cancel();

@@ -18,6 +18,11 @@ export interface Tool {
   down(screen: Vec): void;
   move(screen: Vec): void;
   up(screen: Vec): void;
+  /**
+   * 2本指タップで、作図中の点を1つ取り消す。作図中でなければ false を返し、元に戻すが行われる。
+   * 残りが1点のときは、作図そのものをやめる。
+   */
+  stepBack?(): boolean;
   /** 2本指操作などで割り込まれたときに、押下中の操作だけを取り消す */
   cancelGesture(): void;
   /** 作図途中の状態ごと破棄する */

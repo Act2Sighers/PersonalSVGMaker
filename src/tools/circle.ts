@@ -64,6 +64,15 @@ export class CircleTool implements Tool {
     }
     this.app.refreshUI();
   }
+  /** 2本指タップ：最後の点を取り消す（残り1点なら作図をやめる） */
+  stepBack() {
+    if (!this.pts.length) return false;
+    if (this.pts.length > 1) this.pts.pop();
+    else this.reset();
+    this.app.refreshUI();
+    return true;
+  }
+
   cancelGesture() {
     this.picker.cancel();
     this.app.requestRender();

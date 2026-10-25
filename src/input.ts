@@ -9,7 +9,7 @@ const TAP_MOVE_PX = 12;
  * キャンバスの指操作：
  *  - ペン状態: 1本指 = ツール操作
  *  - ハンド状態: 1本指 = キャンバス移動
- *  - どちらでも: 2本指 = 移動・ズーム、2本指タップ = 元に戻す、3本指タップ = やり直し
+ *  - どちらでも: 2本指 = 移動・ズーム、2本指タップ = 作図中なら点を1つ取り消し／それ以外は元に戻す、3本指タップ = やり直し
  */
 export function attachInput(canvas: HTMLCanvasElement, app: App) {
   const pts = new Map<number, Vec>();
@@ -98,7 +98,8 @@ export function attachInput(canvas: HTMLCanvasElement, app: App) {
       if (pts.size >= 2) last = first = pair();
       if (pts.size === 0) {
         if (!moved && !cancelled && performance.now() - startTime < TAP_MS) {
-          if (maxCount === 2) app.undo();
+          // 作図中なら点を1つ取り消し、そうでなければ元に戻す
+          if (maxCount === 2) { if (!app.tool.stepBack?.()) app.undo(); }
           else if (maxCount === 3) app.redo();
         }
         state = 'idle';

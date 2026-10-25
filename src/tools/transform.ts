@@ -111,6 +111,15 @@ export class TransformTool implements Tool {
     }
     this.app.refreshUI();
   }
+  /** 2本指タップ：最後に指定した点を取り消す（基準点は変形のあとも残す設定なので、参照点・軸の点だけ） */
+  stepBack() {
+    if (this.refPt) this.refPt = null;
+    else if (this.axisA) this.axisA = null;
+    else return false;
+    this.app.refreshUI();
+    return true;
+  }
+
   cancelGesture() {
     this.picker.cancel();
     this.app.requestRender();

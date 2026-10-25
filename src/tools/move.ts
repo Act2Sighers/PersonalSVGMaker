@@ -75,6 +75,14 @@ export class MoveTool implements Tool {
     } else if (m.e || m.f) transformSelection(this.app, m);
     this.app.refreshUI();
   }
+  /** 2本指タップ：指定した基準点を取り消す */
+  stepBack() {
+    if (!this.base) return false;
+    this.base = null;
+    this.app.refreshUI();
+    return true;
+  }
+
   cancelGesture() {
     this.picker.cancel();
     this.app.requestRender();

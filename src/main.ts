@@ -82,6 +82,9 @@ async function start() {
   document.addEventListener('gesturestart', (e) => e.preventDefault());
   document.addEventListener('touchmove', (e) => { if (e.target === canvas) e.preventDefault(); }, { passive: false });
 
+  // ブラウザに、空き容量が少なくなっても保存データを消さないよう頼む（対応していない環境では何もしない）
+  navigator.storage?.persist?.().catch(() => {});
+
   const lastId = getLastProjectId();
   const doc = (lastId && (await loadProject(lastId))) || newDoc();
   app.loadDoc(doc);

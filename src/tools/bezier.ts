@@ -114,6 +114,15 @@ export class BezierTool implements Tool {
     this.app.refreshUI();
   }
 
+  /** 2本指タップ：最後の頂点を取り消す（残り1点なら作図をやめる） */
+  stepBack() {
+    if (!this.nodes.length) return false;
+    if (this.nodes.length > 1) this.nodes.pop();
+    else this.reset();
+    this.app.refreshUI();
+    return true;
+  }
+
   cancelGesture() {
     this.g = null;
     this.picker.cancel();
